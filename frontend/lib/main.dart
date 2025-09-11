@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'class_search_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,6 +16,9 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
+      routes: {
+        '/class-search': (context) => const ClassSearchPage(),
+      },
       home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
@@ -44,6 +48,15 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'Search Classes',
+            onPressed: () {
+              Navigator.of(context).pushNamed('/class-search');
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -130,7 +143,9 @@ class _MyHomePageState extends State<MyHomePage> {
                               ),
                               textStyle: const TextStyle(fontWeight: FontWeight.w600),
                             ),
-                            onPressed: () {},
+                            onPressed: () {
+                              Navigator.of(context).pushNamed('/class-search');
+                            },
                             child: const Text('Sign In'),
                           ),
                         ),
