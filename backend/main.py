@@ -11,6 +11,9 @@ import string
 import datetime
 import json
 import os
+import requests
+from typing import Dict, List
+import uuid
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -103,6 +106,23 @@ class PostResponse(BaseModel):
     created_at: str
     files: List[str]
 
+class AIStudyRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    class_context: Optional[str] = None  # Can include class name, recent posts, etc.
+
+class AIStudyResponse(BaseModel):
+    response: str
+    conversation_id: str
+    timestamp: str
+
+class ConversationHistory(BaseModel):
+    conversation_id: str
+    messages: List[Dict[str, str]]
+    class_id: Optional[str] = None
+    user_id: str
+    created_at: str
+    last_updated: str
 # -------------------------------
 # Auth Dependencies
 # -------------------------------
@@ -140,6 +160,67 @@ def serialize_datetime(obj):
         return obj.isoformat()
     return obj
 
+def get_ai_response(conversation_history: List[Dict], api_key: str, class_context: str = None) -> str:
+    """Get AI response from OpenAI API with classroom context"""
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    # Enhance system prompt with class context if available
+    system_message = conversation_history[0].copy()
+    if class_context:
+        system_message["content"] += f"\n\nClass Context: {class_context}"
+    
+    # Update the conversation with enhanced context
+    enhanced_history = [system_message] + conversation_history[1:]
+    
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": enhanced_history,
+        "max_tokens": 300,
+        "temperature": 0.7
+    }
+    
+    try:
+        response = requests.post(OPENAI_API_URL, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+
+def get_class_context(class_id: str, db) -> str:
+    """Get recent class context for AI conversations"""
+    try:
+        # Get class info
+        class_doc = db.collection("classes").document(class_id).get()
+        if not class_doc.exists:
+            return ""
+        
+        class_data = class_doc.to_dict()
+        class_name = class_data.get("name", "")
+        
+        # Get recent posts for context (last 3 posts)
+        recent_posts = (db.collection("classes").document(class_id)
+                       .collection("posts")
+                       .order_by("createdAt", direction=firestore.Query.DESCENDING)
+                       .limit(3)
+                       .stream())
+        
+        context = f"Class: {class_name}\n"
+        context += "Recent discussion topics:\n"
+        
+        for post in recent_posts:
+            post_data = post.to_dict()
+            context += f"- {post_data.get('title', 'Untitled')}: {post_data.get('post_type', 'discussion')}\n"
+        
+        return context
+    except Exception:
+        return ""
 # -------------------------------
 # AUTH ENDPOINTS
 # -------------------------------
@@ -241,6 +322,221 @@ async def signout(current_user: dict = Depends(mock_get_current_user)):
         return {"message": "Successfully signed out"}
     except Exception as e:
         return {"message": "Signed out (token revocation failed)"}
+
+# -------------------------------
+# AI STUDY BOT ENDPOINTS
+# -------------------------------
+
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-openai-api-key-here")
+STUDY_BUDDY_SYSTEM_PROMPT = """You are an AI Study Buddy for a classroom discussion platform. Your role is to help students learn by:
+
+1. Asking guiding questions instead of giving direct answers
+2. Encouraging critical thinking and exploration
+3. Relating topics to the class context when provided
+4. Being supportive and encouraging
+5. Suggesting study strategies and learning approaches
+
+When a student asks a question:
+- Ask a guiding question back to help them think through the problem
+- Break down complex topics into smaller, manageable parts
+- Encourage them to connect ideas to what they already know
+- Suggest resources or study methods when appropriate
+
+Keep responses concise but helpful. Always aim to facilitate learning rather than just providing answers."""
+@app.post("/api/v1/ai-study-buddy", response_model=AIStudyResponse)
+async def chat_with_study_buddy(
+    request: AIStudyRequest,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Chat with AI Study Buddy"""
+    try:
+        if not OPENAI_API_KEY or OPENAI_API_KEY == "your-openai-api-key-here":
+            raise HTTPException(status_code=503, detail="AI service not configured")
+        
+        # Generate or use existing conversation ID
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+        
+        # Get or create conversation history
+        conv_doc_ref = db.collection("ai_conversations").document(conversation_id)
+        conv_doc = conv_doc_ref.get()
+        
+        if conv_doc.exists:
+            conv_data = conv_doc.to_dict()
+            conversation_history = conv_data.get("messages", [])
+        else:
+            # Initialize new conversation with system prompt
+            conversation_history = [
+                {"role": "system", "content": STUDY_BUDDY_SYSTEM_PROMPT}
+            ]
+        
+        # Add user message to history
+        conversation_history.append({"role": "user", "content": request.message})
+        
+        # Get class context if provided
+        class_context = ""
+        if request.class_context:
+            class_context = get_class_context(request.class_context, db)
+        
+        # Get AI response
+        ai_response = get_ai_response(conversation_history, OPENAI_API_KEY, class_context)
+        
+        # Add AI response to history
+        conversation_history.append({"role": "assistant", "content": ai_response})
+        
+        # Save conversation to Firestore
+        conv_data = {
+            "conversation_id": conversation_id,
+            "messages": conversation_history,
+            "class_id": request.class_context,
+            "user_id": current_user['uid'],
+            "created_at": conv_doc.get("created_at") if conv_doc.exists else datetime.datetime.utcnow(),
+            "last_updated": datetime.datetime.utcnow()
+        }
+        conv_doc_ref.set(conv_data)
+        
+        return AIStudyResponse(
+            response=ai_response,
+            conversation_id=conversation_id,
+            timestamp=datetime.datetime.utcnow().isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Study buddy error: {str(e)}")
+
+@app.get("/api/v1/ai-study-buddy/conversations")
+async def get_study_buddy_conversations(
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Get user's AI study buddy conversation history"""
+    try:
+        conversations = (db.collection("ai_conversations")
+                        .where("user_id", "==", current_user['uid'])
+                        .order_by("last_updated", direction=firestore.Query.DESCENDING)
+                        .limit(10)
+                        .stream())
+        
+        conversation_list = []
+        for conv in conversations:
+            conv_data = conv.to_dict()
+            # Get the first user message as preview
+            first_message = ""
+            for msg in conv_data.get("messages", []):
+                if msg.get("role") == "user":
+                    first_message = msg.get("content", "")[:100] + "..."
+                    break
+            
+            conversation_list.append({
+                "conversation_id": conv_data.get("conversation_id"),
+                "preview": first_message,
+                "class_id": conv_data.get("class_id"),
+                "last_updated": serialize_datetime(conv_data.get("last_updated")),
+                "message_count": len([m for m in conv_data.get("messages", []) if m.get("role") != "system"])
+            })
+        
+        return {"conversations": conversation_list}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get conversations: {str(e)}")
+
+@app.get("/api/v1/ai-study-buddy/conversations/{conversation_id}")
+async def get_conversation_details(
+    conversation_id: str,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Get specific AI study buddy conversation"""
+    try:
+        conv_doc = db.collection("ai_conversations").document(conversation_id).get()
+        if not conv_doc.exists:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        conv_data = conv_doc.to_dict()
+        
+        # Verify user owns this conversation
+        if conv_data.get("user_id") != current_user['uid']:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Format messages for response (exclude system message)
+        formatted_messages = []
+        for msg in conv_data.get("messages", []):
+            if msg.get("role") != "system":
+                formatted_messages.append({
+                    "role": msg.get("role"),
+                    "content": msg.get("content"),
+                    "timestamp": serialize_datetime(conv_data.get("last_updated"))
+                })
+        
+        return {
+            "conversation_id": conversation_id,
+            "messages": formatted_messages,
+            "class_id": conv_data.get("class_id"),
+            "created_at": serialize_datetime(conv_data.get("created_at")),
+            "last_updated": serialize_datetime(conv_data.get("last_updated"))
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get conversation: {str(e)}")
+
+@app.post("/api/v1/classes/{class_id}/ai-study-buddy")
+async def class_specific_study_buddy(
+    class_id: str,
+    request: AIStudyRequest,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Chat with AI Study Buddy in context of specific class"""
+    try:
+        # Verify user is member of class
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+        
+        # Set class context and call main study buddy endpoint
+        request.class_context = class_id
+        return await chat_with_study_buddy(request, current_user)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Class study buddy error: {str(e)}")
+
+# Add this endpoint to integrate AI suggestions with posts
+@app.post("/api/v1/classes/{class_id}/posts/{post_id}/ai-help")
+async def get_ai_help_for_post(
+    class_id: str,
+    post_id: str,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Get AI study buddy help for a specific post"""
+    try:
+        # Verify user is member of class
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+        
+        # Get post content
+        post_doc = (db.collection("classes").document(class_id)
+                   .collection("posts").document(post_id).get())
+        if not post_doc.exists:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        post_data = post_doc.to_dict()
+        
+        # Create AI request based on post content
+        ai_request = AIStudyRequest(
+            message=f"I'm looking at this post: '{post_data.get('title')}' - {post_data.get('content')[:200]}... Can you help me understand this better?",
+            class_context=class_id
+        )
+        
+        return await chat_with_study_buddy(ai_request, current_user)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI post help error: {str(e)}")
 
 # -------------------------------
 # CLASS ENDPOINTS
@@ -429,6 +725,7 @@ async def get_post_details(post_id: str, current_user: dict = Depends(mock_get_c
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get post: {str(e)}")
+    
 
 # -------------------------------
 # Health Check
