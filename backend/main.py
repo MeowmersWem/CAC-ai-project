@@ -15,6 +15,11 @@ import requests
 from typing import Dict, List
 import uuid
 from dotenv import load_dotenv
+from fastapi import UploadFile
+import base64
+import PyPDF2
+from PIL import Image
+import io
 
 # Load environment variables
 load_dotenv()
@@ -123,6 +128,13 @@ class ConversationHistory(BaseModel):
     user_id: str
     created_at: str
     last_updated: str
+
+class AIStudyWithFilesRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+    class_context: Optional[str] = None
+    file_types: List[str] = []  # Track what types of files were uploaded
+    
 # -------------------------------
 # Auth Dependencies
 # -------------------------------
@@ -221,6 +233,64 @@ def get_class_context(class_id: str, db) -> str:
         return context
     except Exception:
         return ""
+    
+def get_ai_response_with_files(conversation_history: List[Dict], api_key: str, 
+                               files_content: List[Dict] = None, class_context: str = None) -> str:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    # Enhance system prompt for file analysis
+    system_message = conversation_history[0].copy()
+    if files_content:
+        system_message["content"] += "\n\nYou can analyze uploaded files (PDFs and images). When files are provided, analyze their content and help the student understand the material through guiding questions."
+    
+    if class_context:
+        system_message["content"] += f"\n\nClass Context: {class_context}"
+    
+    enhanced_history = [system_message] + conversation_history[1:]
+    
+    # Add file content to the last user message if files were provided
+    if files_content and enhanced_history:
+        last_message = enhanced_history[-1]
+        if last_message.get("role") == "user":
+            # For OpenAI GPT-4 Vision API
+            if any(f["type"] == "image" for f in files_content):
+                last_message["content"] = [
+                    {"type": "text", "text": last_message["content"]}
+                ] + files_content
+            else:
+                # For text content from PDFs
+                text_content = "\n\n".join([f["content"] for f in files_content if f["type"] == "text"])
+                last_message["content"] += f"\n\nFile content:\n{text_content}"
+    
+    data = {
+        "model": "gpt-4-vision-preview" if any(f.get("type") == "image" for f in files_content or []) else "gpt-3.5-turbo",
+        "messages": enhanced_history,
+        "max_tokens": 500,
+        "temperature": 0.7
+    }
+    
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
+    response.raise_for_status()
+    result = response.json()
+    return result["choices"][0]["message"]["content"]
+
+# File processing functions
+def extract_pdf_text(pdf_file: UploadFile) -> str:
+    pdf_reader = PyPDF2.PdfReader(pdf_file.file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+def process_image(image_file: UploadFile) -> str:
+    image_bytes = image_file.file.read()
+    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+    return f"data:image/{image_file.filename.split('.')[-1]};base64,{base64_image}"    
+
+
 # -------------------------------
 # AUTH ENDPOINTS
 # -------------------------------
@@ -725,6 +795,99 @@ async def get_post_details(post_id: str, current_user: dict = Depends(mock_get_c
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get post: {str(e)}")
+    
+
+@app.post("/api/v1/ai-study-buddy/with-files")
+async def chat_with_study_buddy_files(
+    message: str = "",
+    conversation_id: Optional[str] = None,
+    class_context: Optional[str] = None,
+    files: List[UploadFile] = File(default=[]),
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Chat with AI Study Buddy including file analysis"""
+    try:
+        if not OPENAI_API_KEY or OPENAI_API_KEY == "your-openai-api-key-here":
+            raise HTTPException(status_code=503, detail="AI service not configured")
+        
+        # Process uploaded files
+        files_content = []
+        file_types = []
+        
+        for file in files:
+            if file.filename.lower().endswith('.pdf'):
+                pdf_text = extract_pdf_text(file)
+                files_content.append({
+                    "type": "text",
+                    "content": f"PDF content from {file.filename}:\n{pdf_text[:2000]}"  # Limit length
+                })
+                file_types.append("pdf")
+                
+            elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                base64_image = process_image(file)
+                files_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": base64_image}
+                })
+                file_types.append("image")
+        
+        # Generate or use existing conversation ID
+        conversation_id = conversation_id or str(uuid.uuid4())
+        
+        # Get or create conversation history
+        conv_doc_ref = db.collection("ai_conversations").document(conversation_id)
+        conv_doc = conv_doc_ref.get()
+        
+        if conv_doc.exists:
+            conv_data = conv_doc.to_dict()
+            conversation_history = conv_data.get("messages", [])
+        else:
+            conversation_history = [
+                {"role": "system", "content": STUDY_BUDDY_SYSTEM_PROMPT}
+            ]
+        
+        # Create user message
+        user_message = message if message else "Can you help me understand these files?"
+        conversation_history.append({"role": "user", "content": user_message})
+        
+        # Get class context if provided
+        class_context_text = ""
+        if class_context:
+            class_context_text = get_class_context(class_context, db)
+        
+        # Get AI response with files
+        ai_response = get_ai_response_with_files(
+            conversation_history, 
+            OPENAI_API_KEY, 
+            files_content,
+            class_context_text
+        )
+        
+        # Add AI response to history
+        conversation_history.append({"role": "assistant", "content": ai_response})
+        
+        # Save conversation to Firestore
+        conv_data = {
+            "conversation_id": conversation_id,
+            "messages": conversation_history,
+            "class_id": class_context,
+            "user_id": current_user['uid'],
+            "created_at": conv_doc.get("created_at") if conv_doc.exists else datetime.datetime.utcnow(),
+            "last_updated": datetime.datetime.utcnow(),
+            "file_types": file_types
+        }
+        conv_doc_ref.set(conv_data)
+        
+        return {
+            "response": ai_response,
+            "conversation_id": conversation_id,
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "processed_files": len(files),
+            "file_types": file_types
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File analysis error: {str(e)}")
     
 
 # -------------------------------
