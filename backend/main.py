@@ -134,6 +134,29 @@ class AIStudyWithFilesRequest(BaseModel):
     conversation_id: Optional[str] = None
     class_context: Optional[str] = None
     file_types: List[str] = []  # Track what types of files were uploaded
+
+
+class NoteSummaryRequest(BaseModel):
+    title: Optional[str] = None
+    class_id: Optional[str] = None
+
+class NoteSummary(BaseModel):
+    summary_id: str
+    title: str
+    key_concepts: List[str]
+    main_points: List[str]
+    study_tips: List[str]
+    questions_for_review: List[str]
+    difficulty_level: str  # "beginner", "intermediate", "advanced"
+    estimated_study_time: str  # "30 minutes", "1 hour", etc.
+    created_at: str
+    file_sources: List[str]  # Original filenames
+    class_id: Optional[str] = None
+    user_id: str
+
+class SummaryResponse(BaseModel):
+    summary: NoteSummary
+    raw_content_preview: str  # First 200 chars of original content
     
 # -------------------------------
 # Auth Dependencies
@@ -290,6 +313,53 @@ def process_image(image_file: UploadFile) -> str:
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     return f"data:image/{image_file.filename.split('.')[-1]};base64,{base64_image}"    
 
+def get_structured_summary(file_content: str, api_key: str, user_title: str = None) -> dict:
+    """Get structured JSON summary from OpenAI"""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    user_message = f"Analyze and summarize this content:\n\n{file_content[:3000]}"  # Limit content length
+    if user_title:
+        user_message = f"Title: {user_title}\n\n{user_message}"
+    
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message}
+        ],
+        "max_tokens": 800,
+        "temperature": 0.3  # Lower temperature for more consistent JSON
+    }
+    
+    try:
+        response = requests.post(OPENAI_API_URL, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        
+        ai_response = result["choices"][0]["message"]["content"].strip()
+        
+        # Parse JSON response
+        try:
+            summary_data = json.loads(ai_response)
+            return summary_data
+        except json.JSONDecodeError as e:
+            # Fallback: try to extract JSON from response if AI added extra text
+            import re
+            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+            else:
+                raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {str(e)}")
+                
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Summary processing error: {str(e)}")
+
+
 
 # -------------------------------
 # AUTH ENDPOINTS
@@ -414,6 +484,26 @@ When a student asks a question:
 - Suggest resources or study methods when appropriate
 
 Keep responses concise but helpful. Always aim to facilitate learning rather than just providing answers."""
+
+SUMMARY_SYSTEM_PROMPT = """You are an AI that creates structured study summaries. When given document content, you must respond with ONLY a valid JSON object in this exact format:
+
+{
+    "key_concepts": ["concept1", "concept2", "concept3"],
+    "main_points": ["point1", "point2", "point3"],
+    "study_tips": ["tip1", "tip2", "tip3"],
+    "questions_for_review": ["question1?", "question2?", "question3?"],
+    "difficulty_level": "beginner|intermediate|advanced",
+    "estimated_study_time": "X minutes|X hours",
+    "title": "Auto-generated title for this content"
+}
+
+Rules:
+- Always return valid JSON only, no other text
+- Include 3-7 items in each array
+- Make study tips actionable and specific
+- Make review questions thought-provoking
+- Base difficulty on content complexity
+- Estimate realistic study time"""
 @app.post("/api/v1/ai-study-buddy", response_model=AIStudyResponse)
 async def chat_with_study_buddy(
     request: AIStudyRequest,
@@ -890,6 +980,195 @@ async def chat_with_study_buddy_files(
         raise HTTPException(status_code=500, detail=f"File analysis error: {str(e)}")
     
 
+@app.post("/api/v1/notes/analyze", response_model=SummaryResponse)
+async def analyze_notes_to_json(
+    files: List[UploadFile] = File(...),
+    request: NoteSummaryRequest = Depends(),
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Analyze uploaded files and return structured JSON summary"""
+    try:
+        if not OPENAI_API_KEY or OPENAI_API_KEY == "your-openai-api-key-here":
+            raise HTTPException(status_code=503, detail="AI service not configured")
+        
+        if not files:
+            raise HTTPException(status_code=400, detail="No files uploaded")
+        
+        # Process files and combine content
+        combined_content = ""
+        file_sources = []
+        
+        for file in files:
+            file_sources.append(file.filename)
+            
+            if file.filename.lower().endswith('.pdf'):
+                pdf_text = extract_pdf_text(file)
+                combined_content += f"\n\n--- Content from {file.filename} ---\n{pdf_text}"
+                
+            elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                # For images, we'll need to use GPT-4 Vision - simplified for now
+                combined_content += f"\n\n--- Image file: {file.filename} (image analysis not implemented in JSON mode) ---\n"
+            
+            elif file.filename.lower().endswith('.txt'):
+                text_content = (await file.read()).decode('utf-8')
+                combined_content += f"\n\n--- Content from {file.filename} ---\n{text_content}"
+        
+        if not combined_content.strip():
+            raise HTTPException(status_code=400, detail="No readable content found in uploaded files")
+        
+        # Get structured summary from AI
+        summary_data = get_structured_summary(
+            combined_content, 
+            OPENAI_API_KEY, 
+            request.title
+        )
+        
+        # Generate summary ID and create database document
+        summary_id = str(uuid.uuid4())
+        
+        # Use provided title or AI-generated one
+        final_title = request.title or summary_data.get("title", "Study Notes")
+        
+        # Create NoteSummary object
+        note_summary = NoteSummary(
+            summary_id=summary_id,
+            title=final_title,
+            key_concepts=summary_data.get("key_concepts", []),
+            main_points=summary_data.get("main_points", []),
+            study_tips=summary_data.get("study_tips", []),
+            questions_for_review=summary_data.get("questions_for_review", []),
+            difficulty_level=summary_data.get("difficulty_level", "intermediate"),
+            estimated_study_time=summary_data.get("estimated_study_time", "30 minutes"),
+            created_at=datetime.datetime.utcnow().isoformat(),
+            file_sources=file_sources,
+            class_id=request.class_id,
+            user_id=current_user['uid']
+        )
+        
+        # Store in Firestore
+        summary_doc = {
+            "summary_id": summary_id,
+            "title": final_title,
+            "key_concepts": summary_data.get("key_concepts", []),
+            "main_points": summary_data.get("main_points", []),
+            "study_tips": summary_data.get("study_tips", []),
+            "questions_for_review": summary_data.get("questions_for_review", []),
+            "difficulty_level": summary_data.get("difficulty_level", "intermediate"),
+            "estimated_study_time": summary_data.get("estimated_study_time", "30 minutes"),
+            "created_at": datetime.datetime.utcnow(),
+            "file_sources": file_sources,
+            "class_id": request.class_id,
+            "user_id": current_user['uid'],
+            "raw_content": combined_content[:1000]  # Store preview of original content
+        }
+        
+        db.collection("note_summaries").document(summary_id).set(summary_doc)
+        
+        return SummaryResponse(
+            summary=note_summary,
+            raw_content_preview=combined_content[:200] + "..." if len(combined_content) > 200 else combined_content
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Note analysis failed: {str(e)}")
+
+# Get user's summaries
+@app.get("/api/v1/summaries")
+async def get_user_summaries(
+    class_id: Optional[str] = None,
+    limit: int = 10,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Get user's note summaries"""
+    try:
+        query = db.collection("note_summaries").where("user_id", "==", current_user['uid'])
+        
+        if class_id:
+            query = query.where("class_id", "==", class_id)
+        
+        summaries = query.order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
+        
+        summary_list = []
+        for summary_doc in summaries:
+            summary_data = summary_doc.to_dict()
+            summary_list.append({
+                "summary_id": summary_data.get("summary_id"),
+                "title": summary_data.get("title"),
+                "difficulty_level": summary_data.get("difficulty_level"),
+                "estimated_study_time": summary_data.get("estimated_study_time"),
+                "created_at": serialize_datetime(summary_data.get("created_at")),
+                "file_sources": summary_data.get("file_sources", []),
+                "class_id": summary_data.get("class_id"),
+                "concept_count": len(summary_data.get("key_concepts", []))
+            })
+        
+        return {"summaries": summary_list}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get summaries: {str(e)}")
+
+# Get specific summary details
+@app.get("/api/v1/summaries/{summary_id}", response_model=NoteSummary)
+async def get_summary_details(
+    summary_id: str,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Get detailed summary by ID"""
+    try:
+        summary_doc = db.collection("note_summaries").document(summary_id).get()
+        
+        if not summary_doc.exists:
+            raise HTTPException(status_code=404, detail="Summary not found")
+        
+        summary_data = summary_doc.to_dict()
+        
+        # Verify ownership
+        if summary_data.get("user_id") != current_user['uid']:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        return NoteSummary(
+            summary_id=summary_data.get("summary_id"),
+            title=summary_data.get("title"),
+            key_concepts=summary_data.get("key_concepts", []),
+            main_points=summary_data.get("main_points", []),
+            study_tips=summary_data.get("study_tips", []),
+            questions_for_review=summary_data.get("questions_for_review", []),
+            difficulty_level=summary_data.get("difficulty_level", "intermediate"),
+            estimated_study_time=summary_data.get("estimated_study_time", "30 minutes"),
+            created_at=serialize_datetime(summary_data.get("created_at")),
+            file_sources=summary_data.get("file_sources", []),
+            class_id=summary_data.get("class_id"),
+            user_id=summary_data.get("user_id")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get summary: {str(e)}")
+
+# Get summaries for a specific class
+@app.get("/api/v1/classes/{class_id}/summaries")
+async def get_class_summaries(
+    class_id: str,
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Get all summaries for a specific class"""
+    try:
+        # Verify user is member of class
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+        
+        return await get_user_summaries(class_id=class_id, current_user=current_user)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get class summaries: {str(e)}")
+    
+    
 # -------------------------------
 # Health Check
 # -------------------------------
