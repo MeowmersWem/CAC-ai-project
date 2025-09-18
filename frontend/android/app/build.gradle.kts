@@ -40,5 +40,8 @@ android {
 }
 
 flutter {
+    // Flutter project root is two levels up from android/app
     source = "../.."
+    // Dart entrypoint relative to the Flutter project root
+    target = "lib/main.dart"
 }
