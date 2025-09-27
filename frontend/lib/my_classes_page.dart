@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'in_class_page.dart';
 import 'app_bottom_nav.dart';
 
 class MyClassesPage extends StatelessWidget {
@@ -20,7 +19,7 @@ class MyClassesPage extends StatelessWidget {
       'SixSeven',
     ];
 
-    String _routeFor(String label) {
+    String routeFor(String label) {
       switch (label.toLowerCase()) {
         case 'english':
           return '/in-class/english';
@@ -88,7 +87,7 @@ class MyClassesPage extends StatelessWidget {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        onPressed: () => Navigator.of(context).pushNamed(_routeFor(label)),
+                        onPressed: () => Navigator.of(context).pushNamed(routeFor(label)),
                         child: Text(label),
                       ),
                     );

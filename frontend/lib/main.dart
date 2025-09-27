@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'class_search_page.dart';
+import 'services/api_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -36,11 +37,52 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
 
-  void _incrementCounter() {
+  
+
+ 
+
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _isLoading = false;
+  String? _errorMessage;
+
+  // Add this new method
+  void _signIn() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final result = await ApiService.login(
+        _emailController.text,
+        _passwordController.text,
+      );
+      
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Login successful! Token: ${result['token'].substring(0, 20)}...')),
+      );
+      
+      
+      
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Login failed: ${e.toString()}';
+      });
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+   void _incrementCounter() {
     setState(() {
       _counter++;
     });
   }
+
+ 
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +148,10 @@ class _MyHomePageState extends State<MyHomePage> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        
+                        const SizedBox(height: 12),
                         TextField(
+                          controller: _emailController, // Add this line
                           decoration: InputDecoration(
                             labelText: 'Email',
                             prefixIcon: const Icon(Icons.email_outlined),
@@ -117,9 +162,9 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                           keyboardType: TextInputType.emailAddress,
                           textInputAction: TextInputAction.next,
-                        ),
-                        const SizedBox(height: 12),
+                        ), 
                         TextField(
+                          controller: _passwordController,
                           decoration: InputDecoration(
                             labelText: 'Password',
                             prefixIcon: const Icon(Icons.lock_outline),
@@ -130,11 +175,12 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                           obscureText: true,
                           textInputAction: TextInputAction.done,
-                        ),
+                        ), 
+                         
                         const SizedBox(height: 16),
                         SizedBox(
                           height: 48,
-                          child: ElevatedButton(
+                          child:  ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.black,
                               foregroundColor: Colors.white,
@@ -143,10 +189,14 @@ class _MyHomePageState extends State<MyHomePage> {
                               ),
                               textStyle: const TextStyle(fontWeight: FontWeight.w600),
                             ),
-                            onPressed: () {
-                              Navigator.of(context).pushNamed('/class-search');
-                            },
-                            child: const Text('Sign In'),
+                            onPressed: _isLoading ? null : _signIn, // Change this line
+                            child: _isLoading 
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Text('Sign In'), // Keep your existing text
                           ),
                         ),
                         const SizedBox(height: 8),

@@ -27,14 +27,17 @@ load_dotenv()
 # Initialize Firebase Admin SDK
 if not firebase_admin._apps:
     try:
-        # Try service account key first (development)
-        if os.path.exists("serviceAccountKey.json"):
-            cred = credentials.Certificate("serviceAccountKey.json")
-            print("✅ Using service account key")
-        else:
-            # Fallback to application default credentials (production)
+        # Use Application Default Credentials in Cloud Run
+        if os.getenv('GOOGLE_CLOUD_PROJECT'):
             cred = credentials.ApplicationDefault()
-            print("✅ Using application default credentials")
+            firebase_admin.initialize_app(cred)
+            print("✅ Using Application Default Credentials")
+        else:
+            # Local development
+            if os.path.exists("serviceAccountKey.json"):
+                cred = credentials.Certificate("serviceAccountKey.json")
+                firebase_admin.initialize_app(cred)
+                print("✅ Using service account key")
         
         firebase_admin.initialize_app(cred)
         print("✅ Firebase Admin SDK initialized")
