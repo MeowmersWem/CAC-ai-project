@@ -6,9 +6,9 @@ class AccountPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       appBar: AppBar(title: Text('Account')),
-      body: Center(child: Text('Account Page')),
+      body: const Center(child: Text('Account Page')),
       bottomNavigationBar: AppBottomNav(currentIndex: 4),
     );
   }

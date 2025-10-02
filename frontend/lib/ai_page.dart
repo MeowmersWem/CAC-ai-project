@@ -36,7 +36,7 @@ class _AIPageState extends State<AIPage> {
 
     try {
       // Call your AI API
-      final response = await ApiService.chatWithAI(userMessage, _conversationId);
+      final response = await ApiService.chatWithAI(userMessage, conversationId: _conversationId);
       
       // Update conversation ID if this is first message
       _conversationId ??= response['conversation_id'];

@@ -25,55 +25,61 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> signup(
-    String email, 
-    String password, 
-    String fullName, 
-    String university
-  ) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/auth/signup'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'email': email,
-        'password': password,
-        'full_name': fullName,
-        'university': university,
-      }),
-    );
+      String email, 
+      String password, 
+      String fullName, 
+      String university
+    ) async {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/signup'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': email,
+          'password': password,
+          'full_name': fullName,
+          'university': university,
+        }),
+      );
 
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Signup failed: ${response.body}');
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Signup failed: ${response.body}');
+      }
     }
-  }
 
-  static Future<Map<String, dynamic>> getUserClasses() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/classes'),
-      headers: {'Content-Type': 'application/json'},
-    );
+    static Future<Map<String, dynamic>> getUserClasses() async {
+      final response = await http.get(
+        Uri.parse('$baseUrl/classes'),
+        headers: {'Content-Type': 'application/json'},
+      );
 
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to get classes: ${response.body}');
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to get classes: ${response.body}');
+      }
     }
-  }
 
-  static Future<Map<String, dynamic>> chatWithAI(String message) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/ai-study-buddy'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'message': message,
-      }),
-    );
+    static Future<Map<String, dynamic>> chatWithAI(
+      String message, {
+      String? conversationId,
+    }) async {
+      final response = await http.post(
+        Uri.parse('$baseUrl/ai-study-buddy'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'message': message,
+          if (conversationId != null) 'conversation_id': conversationId,
+        }),
+      );
 
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('AI chat failed: ${response.body}');
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('AI chat failed: ${response.body}');
+      }
     }
-  }
+    
+
 }

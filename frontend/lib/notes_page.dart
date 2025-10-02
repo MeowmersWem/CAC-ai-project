@@ -6,9 +6,9 @@ class NotesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       appBar: AppBar(title: Text('Notes')),
-      body: Center(child: Text('Notes Page')),
+      body: const Center(child: Text('Notes Page')),
       bottomNavigationBar: AppBottomNav(currentIndex: 3),
     );
   }
