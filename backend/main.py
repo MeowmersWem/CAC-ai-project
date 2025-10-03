@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, HTTPException, Depends, Header, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
@@ -510,7 +509,7 @@ Rules:
 @app.post("/api/v1/ai-study-buddy", response_model=AIStudyResponse)
 async def chat_with_study_buddy(
     request: AIStudyRequest,
-    current_user: dict = Depends(mock_get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Chat with AI Study Buddy"""
     try:
@@ -571,7 +570,7 @@ async def chat_with_study_buddy(
 
 @app.get("/api/v1/ai-study-buddy/conversations")
 async def get_study_buddy_conversations(
-    current_user: dict = Depends(mock_get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get user's AI study buddy conversation history"""
     try:
@@ -607,7 +606,7 @@ async def get_study_buddy_conversations(
 @app.get("/api/v1/ai-study-buddy/conversations/{conversation_id}")
 async def get_conversation_details(
     conversation_id: str,
-    current_user: dict = Depends(mock_get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get specific AI study buddy conversation"""
     try:
@@ -648,7 +647,7 @@ async def get_conversation_details(
 async def class_specific_study_buddy(
     class_id: str,
     request: AIStudyRequest,
-    current_user: dict = Depends(mock_get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Chat with AI Study Buddy in context of specific class"""
     try:
@@ -671,7 +670,7 @@ async def class_specific_study_buddy(
 async def get_ai_help_for_post(
     class_id: str,
     post_id: str,
-    current_user: dict = Depends(mock_get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get AI study buddy help for a specific post"""
     try:
@@ -705,7 +704,7 @@ async def get_ai_help_for_post(
 # CLASS ENDPOINTS
 # -------------------------------
 @app.get("/api/v1/classes")
-async def get_user_classes(current_user: dict = Depends(mock_get_current_user)):
+async def get_user_classes(current_user: dict = Depends(get_current_user)):
     """Get user's enrolled classes"""
     try:
         # Get user's class memberships
@@ -733,7 +732,7 @@ async def get_user_classes(current_user: dict = Depends(mock_get_current_user)):
         raise HTTPException(status_code=500, detail=f"Failed to fetch classes: {str(e)}")
 
 @app.post("/api/v1/classes/join")
-async def join_class_by_code(request: JoinClassRequest, current_user: dict = Depends(mock_get_current_user)):
+async def join_class_by_code(request: JoinClassRequest, current_user: dict = Depends(get_current_user)):
     """Join class by code"""
     try:
         code = request.class_code.upper()
@@ -775,7 +774,7 @@ async def join_class_by_code(request: JoinClassRequest, current_user: dict = Dep
 
 @app.get("/api/v1/classes/{class_id}")
 async def get_class_details(class_id: str, limit: int = 20, offset: int = 0, 
-                           current_user: dict = Depends(mock_get_current_user)):
+                           current_user: dict = Depends(get_current_user)):
     """Get class details and posts"""
     try:
         # Verify user is member of class
@@ -841,7 +840,7 @@ async def get_class_details(class_id: str, limit: int = 20, offset: int = 0,
 
 @app.post("/api/v1/classes/{class_id}/posts")
 async def create_post(class_id: str, request: CreatePostRequest, 
-                     current_user: dict = Depends(mock_get_current_user)):
+                     current_user: dict = Depends(get_current_user)):
     """Create new post in class"""
     try:
         # Verify user is member of class

@@ -48,10 +48,14 @@ class ApiService {
       }
     }
 
-    static Future<Map<String, dynamic>> getUserClasses() async {
+    static Future<Map<String, dynamic>> getUserClasses({String? token}) async {
+      final headers = {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      };
       final response = await http.get(
         Uri.parse('$baseUrl/classes'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
       );
 
       if (response.statusCode == 200) {
@@ -64,14 +68,22 @@ class ApiService {
     static Future<Map<String, dynamic>> chatWithAI(
       String message, {
       String? conversationId,
+      String? token,
+      String? classContext,
     }) async {
+      final headers = {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      };
+      final body = {
+        'message': message,
+        if (conversationId != null) 'conversation_id': conversationId,
+        if (classContext != null) 'class_context': classContext,
+      };
       final response = await http.post(
         Uri.parse('$baseUrl/ai-study-buddy'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'message': message,
-          if (conversationId != null) 'conversation_id': conversationId,
-        }),
+        headers: headers,
+        body: jsonEncode(body),
       );
 
       if (response.statusCode == 200) {
