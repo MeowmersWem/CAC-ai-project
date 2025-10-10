@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'class_search_page.dart';
 import 'signup_page.dart';
 import 'services/api_service.dart';
+import 'my_classes_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -48,36 +49,47 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  // Add this new method
+ 
   void _signIn() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  print("🔵 Sign in button pressed!");
+  print("Email: ${_emailController.text}");
+  print("Password length: ${_passwordController.text.length}");
+  
+  setState(() {
+    _isLoading = true;
+    _errorMessage = null;
+  });
 
-    try {
-      final result = await ApiService.login(
-        _emailController.text,
-        _passwordController.text,
-      );
-      
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login successful! Token: ${result['token'].substring(0, 20)}...')),
-      );
-      
-      
-      
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Login failed: ${e.toString()}';
-      });
-    }
-
+  try {
+    print("🔵 Calling API login...");
+    final result = await ApiService.login(
+      _emailController.text,
+      _passwordController.text,
+    );
+    
+    print("🟢 Login successful! Result: $result");
+    
+    // Navigate to your existing My Classes page
+    print("🔵 Navigating to MyClassesPage...");
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) => const MyClassesPage(),
+      ),
+    );
+    print("🟢 Navigation complete!");
+    
+  } catch (e) {
+    print("🔴 Login error: $e");
     setState(() {
-      _isLoading = false;
+      _errorMessage = 'Login failed: ${e.toString()}';
     });
   }
+
+  setState(() {
+    _isLoading = false;
+  });
+  print("🔵 Sign in process complete");
+}
   
   void _showSignUpDialog() {
     showDialog(
