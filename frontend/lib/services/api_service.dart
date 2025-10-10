@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   //deployed API URL or localhost for development
-  static const String baseUrl = 'http://localhost:8000/api/v1';
+ static const String baseUrl = 'http://10.0.2.2:8080/api/v1';
   
 
 
