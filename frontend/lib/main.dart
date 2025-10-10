@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'class_search_page.dart';
+import 'signup_page.dart';
 import 'services/api_service.dart';
 
 void main() {
@@ -19,6 +20,7 @@ class MyApp extends StatelessWidget {
       ),
       routes: {
         '/class-search': (context) => const ClassSearchPage(),
+        '/sign-up': (context) => const SignUpPage(),
       },
       home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
@@ -75,6 +77,100 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       _isLoading = false;
     });
+  }
+  
+  void _showSignUpDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        final fullNameController = TextEditingController();
+        final universityController = TextEditingController();
+        final emailController = TextEditingController(text: _emailController.text);
+        final passwordController = TextEditingController(text: _passwordController.text);
+        bool isSubmitting = false;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Create account'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: fullNameController,
+                      decoration: const InputDecoration(labelText: 'Full name'),
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: universityController,
+                      decoration: const InputDecoration(labelText: 'University'),
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: emailController,
+                      decoration: const InputDecoration(labelText: 'Email'),
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: passwordController,
+                      decoration: const InputDecoration(labelText: 'Password'),
+                      obscureText: true,
+                      textInputAction: TextInputAction.done,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          setStateDialog(() {
+                            isSubmitting = true;
+                          });
+                          try {
+                            await ApiService.signup(
+                              emailController.text,
+                              passwordController.text,
+                              fullNameController.text,
+                              universityController.text,
+                            );
+                            if (!mounted) return;
+                            Navigator.of(dialogContext).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Account created! You can now sign in.')),
+                            );
+                          } catch (e) {
+                            setStateDialog(() {
+                              isSubmitting = false;
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Sign up failed: ${e.toString()}')),
+                            );
+                          }
+                        },
+                  child: isSubmitting
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Create account'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
    void _incrementCounter() {
     setState(() {
@@ -245,19 +341,24 @@ class _MyHomePageState extends State<MyHomePage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Container(
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Color(0xFFFFE0F0),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.pinkAccent),
-                        ),
-                        alignment: Alignment.center,
-                        child: const Text(
-                          'Sign up',
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontWeight: FontWeight.w600,
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.of(context).pushNamed('/sign-up');
+                        },
+                        child: Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Color(0xFFFFE0F0),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.pinkAccent),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Text(
+                            'Sign up',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
