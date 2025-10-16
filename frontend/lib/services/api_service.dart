@@ -24,6 +24,29 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> createClass({
+    required String name,
+    String? email,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final uri = Uri.parse('$baseUrl/classes').replace(queryParameters: {
+      if (email != null) 'email': email,
+    });
+    final response = await http.post(
+      uri,
+      headers: headers,
+      body: jsonEncode({ 'name': name }),
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Create class failed: ${response.body}');
+    }
+  }
   static Future<Map<String, dynamic>> signup(
       String email, 
       String password, 
@@ -48,6 +71,53 @@ class ApiService {
       }
     }
 
+  static Future<Map<String, dynamic>> getProfile({String? token, String? email}) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final uri = Uri.parse('$baseUrl/users/me').replace(queryParameters: {
+      if (email != null) 'email': email,
+    });
+    final response = await http.get(
+      uri,
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Get profile failed: ${response.body}');
+    }
+  }
+
+  static Future<void> updateProfile({
+    required String role,
+    required String university,
+    required String state,
+    String? token,
+    String? email,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final body = jsonEncode({
+      'role': role,
+      'university': university,
+      'state': state,
+    });
+    final uri = Uri.parse('$baseUrl/users/me').replace(queryParameters: {
+      if (email != null) 'email': email,
+    });
+    final response = await http.put(
+      uri,
+      headers: headers,
+      body: body,
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Update profile failed: ${response.body}');
+    }
+  }
     static Future<Map<String, dynamic>> getUserClasses({String? token}) async {
       final headers = {
         'Content-Type': 'application/json',

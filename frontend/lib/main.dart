@@ -3,6 +3,8 @@ import 'class_search_page.dart';
 import 'signup_page.dart';
 import 'services/api_service.dart';
 import 'my_classes_page.dart';
+import 'start_page.dart';
+import 'create_class_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -22,6 +24,7 @@ class MyApp extends StatelessWidget {
       routes: {
         '/class-search': (context) => const ClassSearchPage(),
         '/sign-up': (context) => const SignUpPage(),
+        '/my-classes': (context) => const MyClassesPage(),
       },
       home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
@@ -51,8 +54,17 @@ class _MyHomePageState extends State<MyHomePage> {
 
  
   void _signIn() async {
+  // basic email format check before calling backend
+  final email = _emailController.text.trim();
+  final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+  if (!emailRegex.hasMatch(email)) {
+    setState(() {
+      _errorMessage = 'Please enter a valid email address';
+    });
+    return;
+  }
   print("🔵 Sign in button pressed!");
-  print("Email: ${_emailController.text}");
+  print("Email: $email");
   print("Password length: ${_passwordController.text.length}");
   
   setState(() {
@@ -69,13 +81,43 @@ class _MyHomePageState extends State<MyHomePage> {
     
     print("🟢 Login successful! Result: $result");
     
-    // Navigate to your existing My Classes page
-    print("🔵 Navigating to MyClassesPage...");
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (context) => const MyClassesPage(),
-      ),
-    );
+    // After login, decide where to go based on profile completeness
+    try {
+      final profile = await ApiService.getProfile(email: _emailController.text.trim());
+      final String? role = profile['role'];
+      final String? university = profile['university'];
+      final String? state = profile['state'];
+      final bool needsProfile =
+          (role == null || role.isEmpty) ||
+          (university == null || university.isEmpty) ||
+          (state == null || state.isEmpty);
+      if (!mounted) return;
+      if (needsProfile) {
+        print("🔵 Navigating to StartPage (collect role/school/state)...");
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => StartPage(email: _emailController.text.trim())),
+        );
+      } else {
+        // role is guaranteed non-null here due to needsProfile == false
+        if (role!.toLowerCase() == 'instructor') {
+          print("🔵 Role=instructor → go to CreateClassPage...");
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => CreateClassPage(email: _emailController.text.trim())),
+          );
+        } else {
+          print("🔵 Role=student → go to MyClassesPage...");
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MyClassesPage()),
+          );
+        }
+      }
+    } catch (e) {
+      // If profile fetch fails, fallback to StartPage so user can complete info
+      if (!mounted) return;
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => StartPage(email: _emailController.text.trim())),
+          );
+    }
     print("🟢 Navigation complete!");
     
   } catch (e) {

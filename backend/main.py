@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List, Any
+from typing import Optional, List
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 import random
@@ -26,9 +26,12 @@ load_dotenv()
 # Initialize Firebase Admin SDK
 if not firebase_admin._apps:
     try:
+        # Resolve service account path relative to this file for stable local dev
+        service_account_path = os.path.join(os.path.dirname(__file__), "serviceAccountKey.json")
+
         # Try service account key first (development)
-        if os.path.exists("serviceAccountKey.json"):
-            cred = credentials.Certificate("serviceAccountKey.json")
+        if os.path.exists(service_account_path):
+            cred = credentials.Certificate(service_account_path)
             print("✅ Using service account key")
         else:
             # Fallback to application default credentials (production)
@@ -53,7 +56,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-security = HTTPBearer()
+# Reserved for future auth middleware
+# security = HTTPBearer()
 
 # -------------------------------
 # Pydantic Models
@@ -78,6 +82,19 @@ class AuthResponse(BaseModel):
     email: str
     full_name: str
     token: str
+
+class UserProfile(BaseModel):
+    user_id: str
+    email: EmailStr
+    full_name: str
+    university: Optional[str] = None
+    state: Optional[str] = None
+    role: Optional[str] = None  # "student" | "instructor"
+
+class ProfileUpdateRequest(BaseModel):
+    university: Optional[str] = None
+    state: Optional[str] = None
+    role: Optional[str] = None
 
 # Class Models
 class JoinClassRequest(BaseModel):
@@ -379,6 +396,8 @@ async def signup(request: SignupRequest):
             "email": request.email,
             "full_name": request.full_name,
             "university": request.university,
+            "state": None,
+            "role": None,
             "created_at": datetime.datetime.utcnow(),
             "karma": 0
         }
@@ -461,6 +480,110 @@ async def signout(current_user: dict = Depends(mock_get_current_user)):
         return {"message": "Successfully signed out"}
     except Exception as e:
         return {"message": "Signed out (token revocation failed)"}
+
+# -------------------------------
+# USER PROFILE ENDPOINTS
+# -------------------------------
+
+@app.get("/api/v1/users/me", response_model=UserProfile)
+async def get_me(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Get current user's profile.
+    - If email is provided, resolve via Firestore users.email == email; if missing, try Firebase Auth to get uid and upsert a minimal profile.
+    - If no email is provided, use current_user.uid.
+    """
+    try:
+        if email:
+            # First, try Firestore by email
+            users_q = list(db.collection("users").where("email", "==", email).limit(1).stream())
+            if users_q:
+                doc = users_q[0]
+                data = doc.to_dict()
+                return UserProfile(
+                    user_id=doc.id,
+                    email=data.get("email", ""),
+                    full_name=data.get("full_name", ""),
+                    university=data.get("university"),
+                    state=data.get("state"),
+                    role=data.get("role"),
+                )
+
+            # Not found in Firestore → try Firebase Auth and upsert
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+
+            user_doc_ref = db.collection("users").document(uid)
+            user_doc = user_doc_ref.get()
+            if not user_doc.exists:
+                user_doc_ref.set({
+                    "email": email,
+                    "full_name": getattr(user_record, 'display_name', "") or "",
+                    "university": None,
+                    "state": None,
+                    "role": None,
+                    "created_at": datetime.datetime.utcnow(),
+                    "karma": 0,
+                })
+                data = user_doc_ref.get().to_dict()
+            else:
+                data = user_doc.to_dict()
+
+            return UserProfile(
+                user_id=uid,
+                email=data.get("email", ""),
+                full_name=data.get("full_name", ""),
+                university=data.get("university"),
+                state=data.get("state"),
+                role=data.get("role"),
+            )
+
+        # No email param: use current_user
+        uid = current_user.get('uid')
+        user_doc = db.collection("users").document(uid).get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User profile not found")
+        data = user_doc.to_dict()
+        return UserProfile(
+            user_id=uid,
+            email=data.get("email", ""),
+            full_name=data.get("full_name", ""),
+            university=data.get("university"),
+            state=data.get("state"),
+            role=data.get("role"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load profile: {str(e)}")
+
+@app.put("/api/v1/users/me")
+async def update_me(payload: ProfileUpdateRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Update current user's profile. If email is provided, resolve via Firebase Auth and upsert by uid."""
+    try:
+        update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+        if not update_data:
+            return {"message": "No changes"}
+
+        if email:
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+            db.collection("users").document(uid).set({
+                "email": email,
+                **update_data
+            }, merge=True)
+        else:
+            uid = current_user.get('uid')
+            db.collection("users").document(uid).set(update_data, merge=True)
+        return {"message": "Profile updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
 
 # -------------------------------
 # AI STUDY BOT ENDPOINTS
@@ -700,6 +823,53 @@ async def get_ai_help_for_post(
 # -------------------------------
 # CLASS ENDPOINTS
 # -------------------------------
+class CreateClassRequest(BaseModel):
+    name: str
+    visibility: Optional[str] = "private"  # private|public
+    join_mode: Optional[str] = "code"      # code|open
+
+@app.post("/api/v1/classes")
+async def create_class(request: CreateClassRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Create a class and add the creator as instructor.
+    In dev, allow ?email=... to resolve the creating user by Firebase Auth.
+    """
+    try:
+        # Resolve creator uid
+        if email:
+            user_record = auth.get_user_by_email(email)
+            creator_uid = user_record.uid
+        else:
+            creator_uid = current_user.get('uid')
+
+        class_ref = db.collection("classes").document()
+        class_id = class_ref.id
+        code = generate_class_code()
+        class_doc = {
+            "name": request.name,
+            "code": code,
+            "createdBy": creator_uid,
+            "createdAt": datetime.datetime.utcnow(),
+            "joinMode": request.join_mode,
+            "visibility": request.visibility,
+        }
+        class_ref.set(class_doc)
+
+        # Add creator as instructor member
+        member_doc = {
+            "classId": class_id,
+            "userId": creator_uid,
+            "role": "instructor",
+            "joinedAt": datetime.datetime.utcnow()
+        }
+        db.collection("classMembers").document(f"{class_id}_{creator_uid}").set(member_doc)
+
+        return {
+            "class_id": class_id,
+            "name": request.name,
+            "code": code,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create class: {str(e)}")
 @app.get("/api/v1/classes")
 async def get_user_classes(current_user: dict = Depends(get_current_user)):
     """Get user's enrolled classes"""
