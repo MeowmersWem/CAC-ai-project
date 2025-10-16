@@ -24,6 +24,42 @@ class ApiService {
     }
   }
 
+  static Future<void> signOut({String? token}) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/signout'),
+      headers: headers,
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Sign out failed: ${response.body}');
+    }
+  }
+  static Future<Map<String, dynamic>> joinClass({
+    required String classCode,
+    String? email,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final uri = Uri.parse('$baseUrl/classes/join').replace(queryParameters: {
+      if (email != null) 'email': email,
+    });
+    final response = await http.post(
+      uri,
+      headers: headers,
+      body: jsonEncode({ 'class_code': classCode }),
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Join class failed: ${response.body}');
+    }
+  }
   static Future<Map<String, dynamic>> createClass({
     required String name,
     String? email,

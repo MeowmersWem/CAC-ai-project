@@ -11,30 +11,9 @@ class MyClassesPage extends StatelessWidget {
 
     // Base button height is 48 in the app; make each class tile 4x that => 192.
     const double tileHeight = 192;
-    final List<String> classes = const [
-      'English',
-      'Math',
-      'CS',
-      'Chemistry',
-      'SixSeven',
-    ];
+    final List<String> classes = const [];
 
-    String routeFor(String label) {
-      switch (label.toLowerCase()) {
-        case 'english':
-          return '/in-class/english';
-        case 'math':
-          return '/in-class/math';
-        case 'cs':
-          return '/in-class/cs';
-        case 'chemistry':
-          return '/in-class/chemistry';
-        case 'sixseven':
-          return '/in-class/sixseven';
-        default:
-          return '/in-class';
-      }
-    }
+    String routeFor(String label) => '/in-class';
 
     return Scaffold(
       appBar: AppBar(
@@ -64,36 +43,46 @@ class MyClassesPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Expanded(
-                child: ListView.separated(
-                  padding: EdgeInsets.zero,
-                  itemCount: classes.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final String label = classes[index];
-                    return SizedBox(
-                      height: tileHeight,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.grey.shade300),
+              if (classes.isEmpty)
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      'No classes yet. Create one or join with a code.',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: ListView.separated(
+                    padding: EdgeInsets.zero,
+                    itemCount: classes.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final String label = classes[index];
+                      return SizedBox(
+                        height: tileHeight,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black,
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: Colors.grey.shade300),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                          textStyle: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          onPressed: () => Navigator.of(context).pushNamed(routeFor(label)),
+                          child: Text(label),
                         ),
-                        onPressed: () => Navigator.of(context).pushNamed(routeFor(label)),
-                        child: Text(label),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
             ],
           ),
         ),

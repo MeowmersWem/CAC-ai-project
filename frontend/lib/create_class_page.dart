@@ -23,8 +23,16 @@ class _CreateClassPageState extends State<CreateClassPage> {
         email: widget.email,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Class created: code ${result['code']}')),
+      final code = result['code'] as String? ?? '';
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Class Created'),
+          content: SelectableText('Join code: $code'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK')),
+          ],
+        ),
       );
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const MyClassesPage()),

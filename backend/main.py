@@ -899,7 +899,7 @@ async def get_user_classes(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Failed to fetch classes: {str(e)}")
 
 @app.post("/api/v1/classes/join")
-async def join_class_by_code(request: JoinClassRequest, current_user: dict = Depends(get_current_user)):
+async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
     """Join class by code"""
     try:
         code = request.class_code.upper()
@@ -915,19 +915,29 @@ async def join_class_by_code(request: JoinClassRequest, current_user: dict = Dep
         class_id = class_doc.id
         class_data = class_doc.to_dict()
         
+        # Resolve user id
+        if email:
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+        else:
+            uid = current_user['uid']
+        
         # Check if already a member
-        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        member_doc = db.collection("classMembers").document(f"{class_id}_{uid}").get()
         if member_doc.exists:
             return {"message": "Already a member of this class", "class_id": class_id}
         
         # Add as student
         member_data = {
             "classId": class_id,
-            "userId": current_user['uid'],
+            "userId": uid,
             "role": "student",
             "joinedAt": datetime.datetime.utcnow()
         }
-        db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").set(member_data)
+        db.collection("classMembers").document(f"{class_id}_{uid}").set(member_data)
         
         return {
             "message": "Successfully joined class",
