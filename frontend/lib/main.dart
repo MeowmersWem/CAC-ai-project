@@ -3,8 +3,10 @@ import 'class_search_page.dart';
 import 'signup_page.dart';
 import 'services/api_service.dart';
 import 'my_classes_page.dart';
+import 'in_class_page.dart';
 import 'start_page.dart';
 import 'create_class_page.dart';
+import 'theme_controller.dart';
 
 void main() {
   runApp(const MyApp());
@@ -16,17 +18,32 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      routes: {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.instance.themeMode,
+      builder: (context, mode, _) {
+        return MaterialApp(
+          title: 'Flutter Demo',
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+            brightness: Brightness.light,
+          ),
+          darkTheme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+            brightness: Brightness.dark,
+          ),
+          themeMode: mode,
+          routes: {
         '/class-search': (context) => const ClassSearchPage(),
         '/sign-up': (context) => const SignUpPage(),
         '/my-classes': (context) => const MyClassesPage(),
+        '/in-class': (context) {
+          // Fallback demo route with placeholder ids
+          return const InClassPage(classId: 'demo-class', className: 'Class');
+        },
+          },
+          home: const MyHomePage(title: 'Flutter Demo Home Page'),
+        );
       },
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }

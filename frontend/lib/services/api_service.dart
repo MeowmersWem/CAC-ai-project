@@ -2,8 +2,9 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  //deployed API URL or localhost for development
- static const String baseUrl = 'http://10.0.2.2:8080/api/v1';
+  // Deployed API URL or localhost for development
+  // If testing on Android emulator, use: http://10.0.2.2:8000/api/v1
+  static const String baseUrl = 'http://localhost:8080/api/v1';
   
 
 
@@ -126,6 +127,72 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> getClassRoster({
+    required String classId,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final response = await http.get(
+      Uri.parse('$baseUrl/classes/$classId/roster'),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Get roster failed: ${response.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> listAssignments({
+    required String classId,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final response = await http.get(
+      Uri.parse('$baseUrl/classes/$classId/assignments'),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('List assignments failed: ${response.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createAssignment({
+    required String classId,
+    required String title,
+    String? description,
+    String? dueDate,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final body = jsonEncode({
+      'title': title,
+      if (description != null) 'description': description,
+      if (dueDate != null) 'due_date': dueDate,
+    });
+    final response = await http.post(
+      Uri.parse('$baseUrl/classes/$classId/assignments'),
+      headers: headers,
+      body: body,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Create assignment failed: ${response.body}');
+    }
+  }
+
   static Future<void> updateProfile({
     required String role,
     required String university,
@@ -170,6 +237,53 @@ class ApiService {
         throw Exception('Failed to get classes: ${response.body}');
       }
     }
+
+  static Future<Map<String, dynamic>> getClassGradesForStudent({
+    required String classId,
+    required String studentId,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final response = await http.get(
+      Uri.parse('$baseUrl/classes/$classId/grades/student/$studentId'),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Get student grades failed: ${response.body}');
+    }
+  }
+
+  static Future<void> setStudentGrade({
+    required String classId,
+    required String assignmentId,
+    required String studentId,
+    required double grade,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final body = jsonEncode({
+      'assignment_id': assignmentId,
+      'grade': grade,
+    });
+    final uri = Uri.parse('$baseUrl/classes/$classId/grades/set')
+        .replace(queryParameters: {'student_id': studentId});
+    final response = await http.post(
+      uri,
+      headers: headers,
+      body: body,
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Set grade failed: ${response.body}');
+    }
+  }
 
     static Future<Map<String, dynamic>> chatWithAI(
       String message, {

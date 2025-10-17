@@ -828,6 +828,17 @@ class CreateClassRequest(BaseModel):
     visibility: Optional[str] = "private"  # private|public
     join_mode: Optional[str] = "code"      # code|open
 
+# --- Assignments & Roster models ---
+class CreateAssignmentRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    due_date: Optional[str] = None  # ISO8601 string
+
+class SetGradeRequest(BaseModel):
+    assignment_id: str
+    grade: float
+
+
 @app.post("/api/v1/classes")
 async def create_class(request: CreateClassRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
     """Create a class and add the creator as instructor.
@@ -1049,6 +1060,180 @@ async def create_post(class_id: str, request: CreatePostRequest,
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create post: {str(e)}")
+
+@app.post("/api/v1/classes/{class_id}/assignments")
+async def create_assignment(class_id: str, request: CreateAssignmentRequest, current_user: dict = Depends(get_current_user)):
+    """Create an assignment (instructors only)."""
+    try:
+        # Verify membership and role
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+        role = member_doc.to_dict().get("role")
+        if role != "instructor":
+            raise HTTPException(status_code=403, detail="Only instructors can create assignments")
+
+        # Create assignment under class
+        asg_ref = (db.collection("classes").document(class_id)
+                   .collection("assignments").document())
+
+        assignment_data = {
+            "title": request.title,
+            "description": request.description or "",
+            "dueDate": request.due_date,
+            "createdAt": datetime.datetime.utcnow(),
+            "createdBy": current_user['uid'],
+        }
+        asg_ref.set(assignment_data)
+
+        return {"message": "Assignment created", "assignment_id": asg_ref.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create assignment: {str(e)}")
+
+@app.get("/api/v1/classes/{class_id}/assignments")
+async def list_assignments(class_id: str, current_user: dict = Depends(get_current_user)):
+    """List assignments for a class (students and instructors)."""
+    try:
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+
+        q = (db.collection("classes").document(class_id)
+             .collection("assignments")
+             .order_by("createdAt", direction=firestore.Query.DESCENDING))
+        results = []
+        for doc in q.stream():
+            d = doc.to_dict()
+            results.append({
+                "assignment_id": doc.id,
+                "title": d.get("title"),
+                "description": d.get("description", ""),
+                "due_date": serialize_datetime(d.get("dueDate")) if isinstance(d.get("dueDate"), datetime.datetime) else d.get("dueDate"),
+                "created_at": serialize_datetime(d.get("createdAt")),
+            })
+        return {"assignments": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list assignments: {str(e)}")
+
+@app.get("/api/v1/classes/{class_id}/roster")
+async def get_class_roster(class_id: str, current_user: dict = Depends(get_current_user)):
+    """Get class roster. Students see classmates; instructors see all students and their roles."""
+    try:
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+        caller_role = member_doc.to_dict().get("role")
+
+        members = db.collection("classMembers").where("classId", "==", class_id).stream()
+        roster = []
+        for m in members:
+            mdata = m.to_dict()
+            user_doc = db.collection("users").document(mdata.get("userId")).get()
+            u = user_doc.to_dict() if user_doc.exists else {}
+            roster.append({
+                "user_id": mdata.get("userId"),
+                "full_name": u.get("full_name", "Unknown"),
+                "role": mdata.get("role", "student"),
+                "joined_at": serialize_datetime(mdata.get("joinedAt")),
+            })
+
+        # Students: only show students (and optionally instructors if desired). Keep simple: return all members.
+        return {"roster": roster, "viewer_role": caller_role}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get roster: {str(e)}")
+
+@app.post("/api/v1/classes/{class_id}/grades/set")
+async def set_student_grade(class_id: str, request: SetGradeRequest, student_id: str, current_user: dict = Depends(get_current_user)):
+    """Set a grade for a student on an assignment (instructors only)."""
+    try:
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists or member_doc.to_dict().get("role") != "instructor":
+            raise HTTPException(status_code=403, detail="Only instructors can set grades")
+        # Ensure student is in class
+        stu_doc = db.collection("classMembers").document(f"{class_id}_{student_id}").get()
+        if not stu_doc.exists:
+            raise HTTPException(status_code=404, detail="Student not in this class")
+
+        grade_ref = (db.collection("classes").document(class_id)
+                     .collection("grades").document(f"{request.assignment_id}_{student_id}"))
+        grade_ref.set({
+            "assignmentId": request.assignment_id,
+            "studentId": student_id,
+            "grade": request.grade,
+            "updatedAt": datetime.datetime.utcnow(),
+            "updatedBy": current_user['uid'],
+        })
+        return {"message": "Grade saved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set grade: {str(e)}")
+
+@app.get("/api/v1/classes/{class_id}/grades/student/{student_id}")
+async def get_student_grades(class_id: str, student_id: str, current_user: dict = Depends(get_current_user)):
+    """Get all grades for a student in a class. Students can view their own; instructors can view any."""
+    try:
+        caller_member = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not caller_member.exists:
+            raise HTTPException(status_code=403, detail="Not a member of this class")
+        caller_role = caller_member.to_dict().get("role")
+        if current_user['uid'] != student_id and caller_role != "instructor":
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+        q = db.collection("classes").document(class_id).collection("grades").where("studentId", "==", student_id)
+        grades = []
+        total = 0.0
+        count = 0
+        for gdoc in q.stream():
+            g = gdoc.to_dict()
+            grades.append({
+                "assignment_id": g.get("assignmentId"),
+                "grade": g.get("grade"),
+                "updated_at": serialize_datetime(g.get("updatedAt")),
+            })
+            if isinstance(g.get("grade"), (int, float)):
+                total += float(g.get("grade"))
+                count += 1
+        final_grade = (total / count) if count else None
+        return {"grades": grades, "final_grade": final_grade}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get student grades: {str(e)}")
+
+@app.get("/api/v1/classes/{class_id}/grades/assignment/{assignment_id}")
+async def get_assignment_grades(class_id: str, assignment_id: str, current_user: dict = Depends(get_current_user)):
+    """List all student grades for an assignment (instructors only)."""
+    try:
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists or member_doc.to_dict().get("role") != "instructor":
+            raise HTTPException(status_code=403, detail="Only instructors can view assignment grades")
+
+        q = (db.collection("classes").document(class_id)
+             .collection("grades").where("assignmentId", "==", assignment_id))
+        results = []
+        for gdoc in q.stream():
+            g = gdoc.to_dict()
+            user_doc = db.collection("users").document(g.get("studentId", "")).get()
+            u = user_doc.to_dict() if user_doc.exists else {}
+            results.append({
+                "student_id": g.get("studentId"),
+                "student_name": u.get("full_name", "Unknown"),
+                "grade": g.get("grade"),
+                "updated_at": serialize_datetime(g.get("updatedAt")),
+            })
+        return {"grades": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get assignment grades: {str(e)}")
+
 
 @app.get("/api/v1/posts/{post_id}")
 async def get_post_details(post_id: str, current_user: dict = Depends(mock_get_current_user)):

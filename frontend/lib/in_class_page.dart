@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'app_bottom_nav.dart';
+import 'student_assignments_page.dart';
+import 'student_classmates_page.dart';
+import 'teacher_students_page.dart';
+import 'student_grades_page.dart';
+import 'services/api_service.dart';
 
 class InClassPage extends StatefulWidget {
-  const InClassPage({super.key, required this.className});
+  const InClassPage({super.key, required this.classId, required this.className});
 
+  final String classId;
   final String className;
 
   @override
@@ -130,11 +136,13 @@ class _InClassPageState extends State<InClassPage> {
                         ),
                       ),
                       onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Messaging instructors...')),
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => StudentClassmatesPage(classId: widget.classId),
+                          ),
                         );
                       },
-                      child: const Text('Message Instructors'),
+                      child: const Text('Classmates'),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -153,7 +161,7 @@ class _InClassPageState extends State<InClassPage> {
                           const SnackBar(content: Text('AI Study coming soon...')),
                         );
                       },
-                      child: const Text('AI Study'),
+                      child: const Text('My Students (instructor)'),
                     ),
                   ),
                 ],
@@ -199,11 +207,13 @@ class _InClassPageState extends State<InClassPage> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Opening Assignments...')),
-                    );
-                  },
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => TeacherStudentsPage(classId: widget.classId),
+                          ),
+                        );
+                      },
                   child: const Text('Assignments'),
                 ),
               ),
@@ -220,9 +230,17 @@ class _InClassPageState extends State<InClassPage> {
                     ),
                     textStyle: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Opening Grades...')),
+                  onPressed: () async {
+                    final profile = await ApiService.getProfile();
+                    final String studentId = (profile['user_id'] ?? '').toString();
+                    if (!mounted || studentId.isEmpty) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => StudentGradesPage(
+                          classId: widget.classId,
+                          studentId: studentId,
+                        ),
+                      ),
                     );
                   },
                   child: const Text('Grades'),
