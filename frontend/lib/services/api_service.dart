@@ -3,8 +3,22 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   // Deployed API URL or localhost for development
-  // If testing on Android emulator, use: http://10.0.2.2:8000/api/v1
-  static const String baseUrl = 'http://10.0.2.2:8000/api/v1';
+  // If testing on Android emulator, use: http://10.0.2.2:8080/api/v1
+  static const String baseUrl = 'http://localhost:8080/api/v1';
+  static String? authToken;
+  static String? authCookie; // for session-cookie based backends
+
+  static Map<String, String> _buildHeaders({String? token, String? cookie}) {
+    final String? effectiveToken = token ?? authToken;
+    final String? effectiveCookie = cookie ?? authCookie;
+    return {
+      'Content-Type': 'application/json',
+      if (effectiveToken != null && effectiveToken.isNotEmpty)
+        'Authorization': 'Bearer $effectiveToken',
+      if (effectiveCookie != null && effectiveCookie.isNotEmpty)
+        'Cookie': effectiveCookie,
+    };
+  }
   
 
 
@@ -19,17 +33,39 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      final dynamic tokenCandidate = data['token'] ?? data['access_token'] ?? data['auth_token'] ?? data['jwt'] ?? data['idToken'];
+      if (tokenCandidate is String && tokenCandidate.isNotEmpty) {
+        authToken = tokenCandidate;
+      }
+      // capture Set-Cookie for session-based auth
+      final setCookie = response.headers['set-cookie'];
+      if (setCookie != null && setCookie.isNotEmpty) {
+        // Extract just the cookie name=value pairs (exclude attributes)
+        // Handle potential multiple cookies concatenated by comma
+        final List<String> rawParts = setCookie.split(',');
+        final List<String> cookiePairs = <String>[];
+        for (final part in rawParts) {
+          final segments = part.split(';');
+          if (segments.isNotEmpty) {
+            final pair = segments.first.trim();
+            if (pair.contains('=')) {
+              cookiePairs.add(pair);
+            }
+          }
+        }
+        if (cookiePairs.isNotEmpty) {
+          authCookie = cookiePairs.join('; ');
+        }
+      }
+      return data;
     } else {
       throw Exception('Login failed: ${response.body}');
     }
   }
 
   static Future<void> signOut({String? token}) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final response = await http.post(
       Uri.parse('$baseUrl/auth/signout'),
       headers: headers,
@@ -43,10 +79,7 @@ class ApiService {
     String? email,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final uri = Uri.parse('$baseUrl/classes/join').replace(queryParameters: {
       if (email != null) 'email': email,
     });
@@ -66,10 +99,7 @@ class ApiService {
     String? email,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final uri = Uri.parse('$baseUrl/classes').replace(queryParameters: {
       if (email != null) 'email': email,
     });
@@ -109,10 +139,7 @@ class ApiService {
     }
 
   static Future<Map<String, dynamic>> getProfile({String? token, String? email}) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final uri = Uri.parse('$baseUrl/users/me').replace(queryParameters: {
       if (email != null) 'email': email,
     });
@@ -131,10 +158,7 @@ class ApiService {
     required String classId,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final response = await http.get(
       Uri.parse('$baseUrl/classes/$classId/roster'),
       headers: headers,
@@ -169,10 +193,7 @@ class ApiService {
     required String classId,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final response = await http.get(
       Uri.parse('$baseUrl/classes/$classId/assignments'),
       headers: headers,
@@ -191,10 +212,7 @@ class ApiService {
     String? dueDate,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final body = jsonEncode({
       'title': title,
       if (description != null) 'description': description,
@@ -219,10 +237,7 @@ class ApiService {
     String? token,
     String? email,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final body = jsonEncode({
       'role': role,
       'university': university,
@@ -241,10 +256,7 @@ class ApiService {
     }
   }
     static Future<Map<String, dynamic>> getUserClasses({String? token}) async {
-      final headers = {
-        'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
+      final headers = _buildHeaders(token: token);
       final response = await http.get(
         Uri.parse('$baseUrl/classes'),
         headers: headers,
@@ -262,10 +274,7 @@ class ApiService {
     required String studentId,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final response = await http.get(
       Uri.parse('$baseUrl/classes/$classId/grades/student/$studentId'),
       headers: headers,
@@ -284,10 +293,7 @@ class ApiService {
     required double grade,
     String? token,
   }) async {
-    final headers = {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
+    final headers = _buildHeaders(token: token);
     final body = jsonEncode({
       'assignment_id': assignmentId,
       'grade': grade,
@@ -310,10 +316,7 @@ class ApiService {
       String? token,
       String? classContext,
     }) async {
-      final headers = {
-        'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
+      final headers = _buildHeaders(token: token);
       final body = {
         'message': message,
         if (conversationId != null) 'conversation_id': conversationId,

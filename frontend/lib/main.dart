@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'class_search_page.dart';
 import 'signup_page.dart';
 import 'services/api_service.dart';
 import 'my_classes_page.dart';
 import 'in_class_page.dart';
 import 'start_page.dart';
-import 'create_class_page.dart';
 import 'theme_controller.dart';
+import 'instructor_my_classes_page.dart';
+import 'ai_page.dart';
+import 'grades_page.dart';
+import 'notes_page.dart';
+import 'account_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -40,6 +45,15 @@ class MyApp extends StatelessWidget {
         '/class-search': (context) => const ClassSearchPage(),
         '/sign-up': (context) => const SignUpPage(),
         '/my-classes': (context) => const MyClassesPage(),
+        // Instructor routes
+        '/instructor/my-classes': (context) {
+          final email = ModalRoute.of(context)?.settings.arguments as String? ?? '';
+          return InstructorMyClassesPage(email: email);
+        },
+        '/instructor/ai': (context) => const AIPage(isInstructor: true),
+        '/instructor/grades': (context) => const GradesPage(isInstructor: true),
+        '/instructor/notes': (context) => const NotesPage(isInstructor: true),
+        '/instructor/account': (context) => const AccountPage(isInstructor: true),
         '/in-class': (context) {
           // Fallback demo route with placeholder ids
           return const InClassPage(classId: 'demo-class', className: 'Class');
@@ -62,16 +76,9 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  
-
- 
-
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
-  String? _errorMessage;
 
  
   void _signIn() async {
@@ -79,28 +86,26 @@ class _MyHomePageState extends State<MyHomePage> {
   final email = _emailController.text.trim();
   final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
   if (!emailRegex.hasMatch(email)) {
-    setState(() {
-      _errorMessage = 'Please enter a valid email address';
-    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a valid email address')));
     return;
   }
-  print("🔵 Sign in button pressed!");
-  print("Email: $email");
-  print("Password length: ${_passwordController.text.length}");
+  debugPrint("🔵 Sign in button pressed!");
+  debugPrint("Email: $email");
+  debugPrint("Password length: ${_passwordController.text.length}");
   
   setState(() {
     _isLoading = true;
-    _errorMessage = null;
   });
 
   try {
-    print("🔵 Calling API login...");
+    debugPrint("🔵 Calling API login...");
     final result = await ApiService.login(
       _emailController.text,
       _passwordController.text,
     );
     
-    print("🟢 Login successful! Result: $result");
+    debugPrint("🟢 Login successful! Result: $result");
     
     // After login, decide where to go based on profile completeness
     try {
@@ -114,19 +119,19 @@ class _MyHomePageState extends State<MyHomePage> {
           (state == null || state.isEmpty);
       if (!mounted) return;
       if (needsProfile) {
-        print("🔵 Navigating to StartPage (collect role/school/state)...");
+        debugPrint("🔵 Navigating to StartPage (collect role/school/state)...");
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => StartPage(email: _emailController.text.trim())),
         );
       } else {
         // role is guaranteed non-null here due to needsProfile == false
-        if (role!.toLowerCase() == 'instructor') {
-          print("🔵 Role=instructor → go to CreateClassPage...");
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => CreateClassPage(email: _emailController.text.trim())),
+        if (role.toLowerCase() == 'instructor') {
+          Navigator.of(context).pushReplacementNamed(
+            '/instructor/my-classes',
+            arguments: _emailController.text.trim(),
           );
         } else {
-          print("🔵 Role=student → go to MyClassesPage...");
+          debugPrint("🔵 Role=student → go to MyClassesPage...");
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MyClassesPage()),
           );
@@ -139,119 +144,21 @@ class _MyHomePageState extends State<MyHomePage> {
             MaterialPageRoute(builder: (_) => StartPage(email: _emailController.text.trim())),
           );
     }
-    print("🟢 Navigation complete!");
+    debugPrint("🟢 Navigation complete!");
     
   } catch (e) {
-    print("🔴 Login error: $e");
-    setState(() {
-      _errorMessage = 'Login failed: ${e.toString()}';
-    });
+    debugPrint("🔴 Login error: $e");
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Login failed: ${e.toString()}')));
   }
 
   setState(() {
     _isLoading = false;
   });
-  print("🔵 Sign in process complete");
+  debugPrint("🔵 Sign in process complete");
 }
   
-  void _showSignUpDialog() {
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        final fullNameController = TextEditingController();
-        final universityController = TextEditingController();
-        final emailController = TextEditingController(text: _emailController.text);
-        final passwordController = TextEditingController(text: _passwordController.text);
-        bool isSubmitting = false;
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return AlertDialog(
-              title: const Text('Create account'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: fullNameController,
-                      decoration: const InputDecoration(labelText: 'Full name'),
-                      textInputAction: TextInputAction.next,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: universityController,
-                      decoration: const InputDecoration(labelText: 'University'),
-                      textInputAction: TextInputAction.next,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: emailController,
-                      decoration: const InputDecoration(labelText: 'Email'),
-                      keyboardType: TextInputType.emailAddress,
-                      textInputAction: TextInputAction.next,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: passwordController,
-                      decoration: const InputDecoration(labelText: 'Password'),
-                      obscureText: true,
-                      textInputAction: TextInputAction.done,
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isSubmitting ? null : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: isSubmitting
-                      ? null
-                      : () async {
-                          setStateDialog(() {
-                            isSubmitting = true;
-                          });
-                          try {
-                            await ApiService.signup(
-                              emailController.text,
-                              passwordController.text,
-                              fullNameController.text,
-                              universityController.text,
-                            );
-                            if (!mounted) return;
-                            Navigator.of(dialogContext).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Account created! You can now sign in.')),
-                            );
-                          } catch (e) {
-                            setStateDialog(() {
-                              isSubmitting = false;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Sign up failed: ${e.toString()}')),
-                            );
-                          }
-                        },
-                  child: isSubmitting
-                      ? const SizedBox(
-                          height: 16,
-                          width: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Create account'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-   void _incrementCounter() {
-    setState(() {
-      _counter++;
-    });
-  }
+  // Removed unused sign-up dialog and counter
 
  
 
@@ -308,7 +215,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
+                          color: Colors.black.withValues(alpha: 0.06),
                           blurRadius: 12,
                           offset: const Offset(0, 6),
                         ),
@@ -446,11 +353,7 @@ class _MyHomePageState extends State<MyHomePage> {
         ],
       ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+      // Floating action button removed as counter is unused
     );
   }
 }

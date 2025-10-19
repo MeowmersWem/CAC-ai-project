@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'app_bottom_nav.dart';
+import 'instructor_bottom_nav.dart';
 import 'services/api_service.dart';
 
 class AIPage extends StatefulWidget {
-  const AIPage({super.key});
+  const AIPage({super.key, this.isInstructor = false});
+  final bool isInstructor;
 
   @override
   State<AIPage> createState() => _AIPageState();
@@ -202,7 +204,9 @@ class _AIPageState extends State<AIPage> {
           ),
         ],
       ),
-      bottomNavigationBar: const AppBottomNav(currentIndex: 1),
+      bottomNavigationBar: widget.isInstructor
+          ? const InstructorBottomNav(currentIndex: 1)
+          : const AppBottomNav(currentIndex: 1),
     );
   }
 }

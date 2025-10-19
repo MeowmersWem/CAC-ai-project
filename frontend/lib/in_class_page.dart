@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'app_bottom_nav.dart';
-import 'student_assignments_page.dart';
 import 'student_classmates_page.dart';
 import 'teacher_students_page.dart';
 import 'student_grades_page.dart';
+import 'student_assignments_page.dart';
 import 'services/api_service.dart';
 
 class InClassPage extends StatefulWidget {
@@ -89,6 +90,7 @@ class _InClassPageState extends State<InClassPage> {
                         onPressed: () {
                           final code = (_classDetails!['join_code'] ?? '').toString();
                           if (code.isEmpty) return;
+                          Clipboard.setData(ClipboardData(text: code));
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied join code')));
                         },
                         icon: const Icon(Icons.copy_all_outlined),
@@ -213,8 +215,10 @@ class _InClassPageState extends State<InClassPage> {
                         ),
                       ),
                       onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('AI Study coming soon...')),
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => TeacherStudentsPage(classId: widget.classId),
+                          ),
                         );
                       },
                       child: const Text('My Students (instructor)'),
@@ -266,7 +270,7 @@ class _InClassPageState extends State<InClassPage> {
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => TeacherStudentsPage(classId: widget.classId),
+                            builder: (_) => AssignmentsPage(classId: widget.classId),
                           ),
                         );
                       },
@@ -287,10 +291,11 @@ class _InClassPageState extends State<InClassPage> {
                     textStyle: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   onPressed: () async {
+                    final navigator = Navigator.of(context);
                     final profile = await ApiService.getProfile();
                     final String studentId = (profile['user_id'] ?? '').toString();
                     if (!mounted || studentId.isEmpty) return;
-                    Navigator.of(context).push(
+                    navigator.push(
                       MaterialPageRoute(
                         builder: (_) => StudentGradesPage(
                           classId: widget.classId,

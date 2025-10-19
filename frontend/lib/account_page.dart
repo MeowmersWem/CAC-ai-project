@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'app_bottom_nav.dart';
+import 'instructor_bottom_nav.dart';
 import 'services/api_service.dart';
 import 'main.dart';
 import 'theme_controller.dart';
 
 class AccountPage extends StatefulWidget {
-  const AccountPage({super.key});
+  const AccountPage({super.key, this.isInstructor = false});
+  final bool isInstructor;
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -182,7 +184,9 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ],
       ),
-      bottomNavigationBar: const AppBottomNav(currentIndex: 4),
+      bottomNavigationBar: widget.isInstructor
+          ? const InstructorBottomNav(currentIndex: 4)
+          : const AppBottomNav(currentIndex: 4),
     );
   }
 }
