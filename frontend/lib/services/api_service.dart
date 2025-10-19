@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ApiService {
   // Deployed API URL or localhost for development
   // If testing on Android emulator, use: http://10.0.2.2:8000/api/v1
-  static const String baseUrl = 'http://localhost:8080/api/v1';
+  static const String baseUrl = 'http://10.0.2.2:8000/api/v1';
   
 
 
@@ -143,6 +143,25 @@ class ApiService {
       return jsonDecode(response.body);
     } else {
       throw Exception('Get roster failed: ${response.body}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> getClassDetails({
+    required String classId,
+    String? token,
+  }) async {
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+    final response = await http.get(
+      Uri.parse('$baseUrl/classes/$classId'),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Get class details failed: ${response.body}');
     }
   }
 

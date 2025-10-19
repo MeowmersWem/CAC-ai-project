@@ -19,11 +19,33 @@ class InClassPage extends StatefulWidget {
 class _InClassPageState extends State<InClassPage> {
   bool _showComposer = false;
   final TextEditingController _postController = TextEditingController();
+  Map<String, dynamic>? _classDetails; // includes join_code for instructors
+  bool _loadingDetails = true;
 
   @override
   void dispose() {
     _postController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetails();
+  }
+
+  Future<void> _loadDetails() async {
+    try {
+      final details = await ApiService.getClassDetails(classId: widget.classId);
+      if (!mounted) return;
+      setState(() {
+        _classDetails = details;
+        _loadingDetails = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _loadingDetails = false; });
+    }
   }
 
   @override
@@ -42,6 +64,40 @@ class _InClassPageState extends State<InClassPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (_loadingDetails)
+                const LinearProgressIndicator(minHeight: 2),
+              if (!_loadingDetails && (_classDetails?['join_code'] != null)) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.key_outlined),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Join code: ${_classDetails!['join_code']}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Copy',
+                        onPressed: () {
+                          final code = (_classDetails!['join_code'] ?? '').toString();
+                          if (code.isEmpty) return;
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied join code')));
+                        },
+                        icon: const Icon(Icons.copy_all_outlined),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               SizedBox(
                 height: 48,
                 child: ElevatedButton(
