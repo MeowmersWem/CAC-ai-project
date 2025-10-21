@@ -170,6 +170,21 @@ class ApiService {
     }
   }
 
+  static Future<void> removeStudent({
+    required String classId,
+    required String studentId,
+    String? token,
+  }) async {
+    final headers = _buildHeaders(token: token);
+    final response = await http.delete(
+      Uri.parse('$baseUrl/classes/$classId/roster/$studentId'),
+      headers: headers,
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Remove student failed: ${response.body}');
+    }
+  }
+
   static Future<Map<String, dynamic>> getClassDetails({
     required String classId,
     String? token,
@@ -230,6 +245,21 @@ class ApiService {
     }
   }
 
+  static Future<void> deleteClass({
+    required String classId,
+    String? email,
+    String? token,
+  }) async {
+    final headers = _buildHeaders(token: token);
+    final uri = Uri.parse('$baseUrl/classes/$classId').replace(queryParameters: {
+      if (email != null && email.isNotEmpty) 'email': email,
+    });
+    final response = await http.delete(uri, headers: headers);
+    if (response.statusCode != 200) {
+      throw Exception('Delete class failed: ${response.body}');
+    }
+  }
+
   static Future<void> updateProfile({
     required String role,
     required String university,
@@ -255,10 +285,13 @@ class ApiService {
       throw Exception('Update profile failed: ${response.body}');
     }
   }
-    static Future<Map<String, dynamic>> getUserClasses({String? token}) async {
+  static Future<Map<String, dynamic>> getUserClasses({String? token, String? email}) async {
       final headers = _buildHeaders(token: token);
+      final uri = Uri.parse('$baseUrl/classes').replace(queryParameters: {
+        if (email != null && email.isNotEmpty) 'email': email,
+      });
       final response = await http.get(
-        Uri.parse('$baseUrl/classes'),
+        uri,
         headers: headers,
       );
 

@@ -71,6 +71,34 @@ class _TeacherStudentsPageState extends State<TeacherStudentsPage> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
                 title: Text(u['full_name'] ?? 'Unknown'),
                 subtitle: const Text('Tap to view grades'),
+                trailing: IconButton(
+                  icon: const Icon(Icons.person_remove_outlined),
+                  tooltip: 'Remove from class',
+                  onPressed: () async {
+                    final bool? confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Remove student?'),
+                        content: Text('Remove ${u['full_name'] ?? 'this student'} from the class?'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      try {
+                        await ApiService.removeStudent(classId: widget.classId, studentId: (u['user_id'] ?? '').toString());
+                        if (!mounted) return;
+                        setState(() { _future = _load(); });
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Removed')));
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: ${e.toString()}')));
+                      }
+                    }
+                  },
+                ),
                 onTap: () {
                   // TODO: navigate to per-student grades for assignments
                 },

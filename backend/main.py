@@ -882,11 +882,21 @@ async def create_class(request: CreateClassRequest, email: Optional[str] = None,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create class: {str(e)}")
 @app.get("/api/v1/classes")
-async def get_user_classes(current_user: dict = Depends(get_current_user)):
-    """Get user's enrolled classes"""
+async def get_user_classes(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Get user's enrolled classes. In dev, allow ?email=... to resolve uid via Firebase Auth."""
     try:
+        # Resolve uid from email if provided (dev convenience), else use current user
+        if email:
+            try:
+                user_record = auth.get_user_by_email(email)
+                resolved_uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+        else:
+            resolved_uid = current_user['uid']
+
         # Get user's class memberships
-        memberships = db.collection("classMembers").where("userId", "==", current_user['uid']).stream()
+        memberships = db.collection("classMembers").where("userId", "==", resolved_uid).stream()
         
         classes = []
         for membership in memberships:
@@ -1026,6 +1036,63 @@ async def get_class_details(class_id: str, limit: int = 20, offset: int = 0,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get class details: {str(e)}")
 
+@app.delete("/api/v1/classes/{class_id}")
+async def delete_class(class_id: str, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Delete a class and related data (instructors only; creator can delete).
+    In dev, allow ?email=... to resolve the actor via Firebase Auth.
+    """
+    try:
+        # Resolve acting uid
+        if email:
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+        else:
+            uid = current_user.get('uid')
+
+        # Verify class exists
+        class_ref = db.collection("classes").document(class_id)
+        class_doc = class_ref.get()
+        if not class_doc.exists:
+            raise HTTPException(status_code=404, detail="Class not found")
+        class_data = class_doc.to_dict()
+
+        # Verify user is instructor and creator
+        creator_uid = class_data.get("createdBy")
+        member_doc = db.collection("classMembers").document(f"{class_id}_{uid}").get()
+        if not member_doc.exists or member_doc.to_dict().get("role") != "instructor" or uid != creator_uid:
+            raise HTTPException(status_code=403, detail="Only the creating instructor can delete this class")
+
+        # Best-effort delete subcollections
+        def _delete_subcollection(parent_ref, sub_name):
+            try:
+                for doc in parent_ref.collection(sub_name).stream():
+                    doc.reference.delete()
+            except Exception:
+                pass
+
+        _delete_subcollection(class_ref, "posts")
+        _delete_subcollection(class_ref, "assignments")
+        _delete_subcollection(class_ref, "grades")
+
+        # Delete memberships for this class
+        try:
+            for m in db.collection("classMembers").where("classId", "==", class_id).stream():
+                m.reference.delete()
+        except Exception:
+            pass
+
+        # Finally delete the class document
+        class_ref.delete()
+
+        return {"message": "Class deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete class: {str(e)}")
+
 @app.post("/api/v1/classes/{class_id}/posts")
 async def create_post(class_id: str, request: CreatePostRequest, 
                      current_user: dict = Depends(get_current_user)):
@@ -1147,6 +1214,26 @@ async def get_class_roster(class_id: str, current_user: dict = Depends(get_curre
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get roster: {str(e)}")
+
+@app.delete("/api/v1/classes/{class_id}/roster/{student_id}")
+async def remove_student_from_class(class_id: str, student_id: str, current_user: dict = Depends(get_current_user)):
+    """Remove a student from a class (instructors only)."""
+    try:
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists or member_doc.to_dict().get("role") != "instructor":
+            raise HTTPException(status_code=403, detail="Only instructors can remove students")
+
+        # Ensure target student is in class
+        target_doc = db.collection("classMembers").document(f"{class_id}_{student_id}").get()
+        if not target_doc.exists:
+            raise HTTPException(status_code=404, detail="Student not in this class")
+
+        db.collection("classMembers").document(f"{class_id}_{student_id}").delete()
+        return {"message": "Student removed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove student: {str(e)}")
 
 @app.post("/api/v1/classes/{class_id}/grades/set")
 async def set_student_grade(class_id: str, request: SetGradeRequest, student_id: str, current_user: dict = Depends(get_current_user)):

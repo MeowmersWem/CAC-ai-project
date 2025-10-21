@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'class_search_page.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'signup_page.dart';
 import 'services/api_service.dart';
 import 'my_classes_page.dart';
@@ -26,7 +27,15 @@ class MyApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeController.instance.themeMode,
       builder: (context, mode, _) {
-        return MaterialApp(
+        return ValueListenableBuilder<double>(
+          valueListenable: ThemeController.instance.textScaleFactor,
+          builder: (context, scale, __) {
+            return ValueListenableBuilder<Locale?>(
+              valueListenable: ThemeController.instance.locale,
+              builder: (context, appLocale, ___) {
+                return MediaQuery(
+                  data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: MaterialApp(
           title: 'Flutter Demo',
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
@@ -41,10 +50,26 @@ class MyApp extends StatelessWidget {
             ),
           ),
           themeMode: mode,
+          locale: appLocale,
+          supportedLocales: const [
+            Locale('en'), // English
+            Locale('zh', 'CN'), // Simplified Chinese
+            Locale('fr'), // French
+          ],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           routes: {
         '/class-search': (context) => const ClassSearchPage(),
         '/sign-up': (context) => const SignUpPage(),
         '/my-classes': (context) => const MyClassesPage(),
+        // Student routes for bottom nav
+        '/ai': (context) => const AIPage(isInstructor: false),
+        '/grades': (context) => const GradesPage(isInstructor: false),
+        '/notes': (context) => const NotesPage(isInstructor: false),
+        '/account': (context) => const AccountPage(isInstructor: false),
         // Instructor routes
         '/instructor/my-classes': (context) {
           final email = ModalRoute.of(context)?.settings.arguments as String? ?? '';
@@ -60,6 +85,11 @@ class MyApp extends StatelessWidget {
         },
           },
           home: const MyHomePage(title: 'Flutter Demo Home Page'),
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );

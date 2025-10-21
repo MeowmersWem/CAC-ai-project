@@ -10,7 +10,7 @@ class InstructorMyClassesPage extends StatelessWidget {
   final String email;
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final res = await ApiService.getUserClasses();
+    final res = await ApiService.getUserClasses(email: email);
     final List<dynamic> items = res['classes'] ?? [];
     return items.cast<Map<String, dynamic>>();
   }
@@ -85,26 +85,83 @@ class InstructorMyClassesPage extends StatelessWidget {
                         final String classId = (item['class_id'] ?? '') as String;
                         return SizedBox(
                           height: tileHeight,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black,
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(color: Colors.grey.shade300),
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: Colors.black,
+                                    elevation: 2,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      side: BorderSide(color: Colors.grey.shade300),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  onPressed: () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => InClassPage(classId: classId, className: name),
+                                    ),
+                                  ),
+                                  child: Text(name),
+                                ),
                               ),
-                              textStyle: const TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w700,
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.06),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                    tooltip: 'Delete class',
+                                    onPressed: () async {
+                                      final bool? confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          title: const Text('Delete class?'),
+                                          content: Text('Are you sure you want to delete "$name"? This cannot be undone.'),
+                                          actions: [
+                                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirm == true) {
+                                        try {
+                                          await ApiService.deleteClass(classId: classId, email: email);
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(content: Text('Class deleted')),
+                                            );
+                                          }
+                                          (context as Element).markNeedsBuild();
+                                        } catch (e) {
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(content: Text('Delete failed: ${e.toString()}')),
+                                            );
+                                          }
+                                        }
+                                      }
+                                    },
+                                  ),
+                                ),
                               ),
-                            ),
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => InClassPage(classId: classId, className: name),
-                              ),
-                            ),
-                            child: Text(name),
+                            ],
                           ),
                         );
                       },

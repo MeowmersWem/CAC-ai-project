@@ -34,8 +34,10 @@ class _CreateClassPageState extends State<CreateClassPage> {
           ],
         ),
       );
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MyClassesPage()),
+      // After creating a class as instructor, go back to instructor classes
+      Navigator.of(context).pushReplacementNamed(
+        '/instructor/my-classes',
+        arguments: widget.email,
       );
     } catch (e) {
       setState(() { _error = e.toString(); _submitting = false; });

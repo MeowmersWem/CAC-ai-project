@@ -17,8 +17,8 @@ class _AccountPageState extends State<AccountPage> {
   bool _notifications = true;
   bool _dataSaver = false;
   bool _biometrics = false;
-  double _textScale = 1.0;
-  String _language = 'English';
+  double _textScale = ThemeController.instance.textScaleFactor.value;
+  String _language = _localeToLabel(ThemeController.instance.locale.value);
 
   void _changePasswordDialog() {
     final oldController = TextEditingController();
@@ -94,7 +94,10 @@ class _AccountPageState extends State<AccountPage> {
               max: 1.4,
               divisions: 6,
               label: _textScale.toStringAsFixed(1),
-              onChanged: (v) => setState(() => _textScale = v),
+              onChanged: (v) {
+                setState(() => _textScale = v);
+                ThemeController.instance.setTextScale(v);
+              },
             ),
           ),
           const Divider(),
@@ -106,10 +109,14 @@ class _AccountPageState extends State<AccountPage> {
               value: _language,
               items: const [
                 DropdownMenuItem(value: 'English', child: Text('English')),
-                DropdownMenuItem(value: 'Spanish', child: Text('Spanish')),
-                DropdownMenuItem(value: 'Korean', child: Text('Korean')),
+                DropdownMenuItem(value: '简体中文', child: Text('简体中文')),
+                DropdownMenuItem(value: 'Français', child: Text('Français')),
               ],
-              onChanged: (v) => setState(() => _language = v ?? 'English'),
+              onChanged: (v) {
+                final String selected = v ?? 'English';
+                setState(() => _language = selected);
+                ThemeController.instance.setLocale(_labelToLocale(selected));
+              },
             ),
           ),
           const Divider(),
@@ -188,6 +195,25 @@ class _AccountPageState extends State<AccountPage> {
           ? const InstructorBottomNav(currentIndex: 4)
           : const AppBottomNav(currentIndex: 4),
     );
+  }
+}
+
+String _localeToLabel(Locale? locale) {
+  if (locale == null) return 'English';
+  if (locale.languageCode == 'zh') return '简体中文';
+  if (locale.languageCode == 'fr') return 'Français';
+  return 'English';
+}
+
+Locale? _labelToLocale(String label) {
+  switch (label) {
+    case '简体中文':
+      return const Locale('zh', 'CN');
+    case 'Français':
+      return const Locale('fr');
+    case 'English':
+    default:
+      return const Locale('en');
   }
 }
 
