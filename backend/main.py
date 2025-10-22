@@ -19,9 +19,19 @@ import base64
 import PyPDF2
 from PIL import Image
 import io
-
+import logging
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel 
 # Load environment variables
 load_dotenv()
+
+# ---- Logging setup (top of file) ----
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+logger = logging.getLogger("api")  # use this one everywhere
 
 # Initialize Firebase Admin SDK
 if not firebase_admin._apps:
@@ -190,14 +200,20 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
 
 # Mock auth for development/testing
-async def mock_get_current_user():
-    """Mock user for testing - replace with real auth in production"""
-    return {
-        'uid': 'test_user_id',
-        'email': 'test@example.com',
-        'name': 'Test User'
-    }
-
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """Extract and verify Firebase ID token from Authorization header"""
+    if not authorization or not authorization.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        token = authorization.split('Bearer ')[1]
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
+    except Exception as e:
+        raise HTTPException(
+            status_code=401, 
+            detail=f"Invalid authentication token: {str(e)}"
+        )
 # -------------------------------
 # Utility Functions
 # -------------------------------
@@ -376,10 +392,13 @@ def get_structured_summary(file_content: str, api_key: str, user_title: str = No
         raise HTTPException(status_code=500, detail=f"Summary processing error: {str(e)}")
 
 
-
+@app.get("/__routes")
+def __routes():
+    return {"routes": [getattr(r, "path", str(r)) for r in app.routes]}
 # -------------------------------
 # AUTH ENDPOINTS
 # -------------------------------
+
 @app.post("/api/v1/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest):
     """Register new user account"""
@@ -418,13 +437,11 @@ async def signup(request: SignupRequest):
 @app.post("/api/v1/auth/login")
 async def login(request: LoginRequest):
     """Authenticate user login"""
-    # Note: Firebase Admin SDK doesn't handle password authentication directly
-    # You'll need to use Firebase Auth REST API or handle this on the frontend
-    # This is a placeholder implementation
     try:
-        # In a real implementation, you'd verify credentials via Firebase Auth REST API
-        # or handle this entirely on the frontend
+        # Get user by email
         user = auth.get_user_by_email(request.email)
+        
+        # Create custom token
         custom_token = auth.create_custom_token(user.uid)
         
         # Get user profile
@@ -435,10 +452,10 @@ async def login(request: LoginRequest):
             "user_id": user.uid,
             "email": user.email,
             "full_name": user_data.get("full_name", ""),
-            "token": custom_token.decode('utf-8')
+            "custom_token": custom_token.decode('utf-8'),  # Renamed from 'token' to be explicit
         }
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail=f"Invalid credentials: {str(e)}")
 
 @app.post("/api/v1/auth/google")
 async def google_auth(request: GoogleAuthRequest):
@@ -486,105 +503,120 @@ async def signout(current_user: dict = Depends(mock_get_current_user)):
 # -------------------------------
 
 @app.get("/api/v1/users/me", response_model=UserProfile)
-async def get_me(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
-    """Get current user's profile.
-    - If email is provided, resolve via Firestore users.email == email; if missing, try Firebase Auth to get uid and upsert a minimal profile.
-    - If no email is provided, use current_user.uid.
+async def get_me(
+    email: Optional[str] = Query(None),
+    current_user: dict = Depends(mock_get_current_user)  # or get_current_user if you’ve switched
+):
     """
-    try:
-        if email:
-            # First, try Firestore by email
-            users_q = list(db.collection("users").where("email", "==", email).limit(1).stream())
-            if users_q:
-                doc = users_q[0]
-                data = doc.to_dict()
-                return UserProfile(
-                    user_id=doc.id,
-                    email=data.get("email", ""),
-                    full_name=data.get("full_name", ""),
-                    university=data.get("university"),
-                    state=data.get("state"),
-                    role=data.get("role"),
-                )
+    If ?email= is provided, look up by email.
+    Otherwise return the current signed-in user's profile.
+    """
+    logger.info("GET /api/v1/users/me | email=%s | uid=%s", email, (current_user or {}).get("uid"))
 
-            # Not found in Firestore → try Firebase Auth and upsert
-            try:
-                user_record = auth.get_user_by_email(email)
-                uid = user_record.uid
-            except Exception:
+    try:
+        # ---- Lookup by email (query param) ----
+        if email:
+            email_norm = email.strip().lower()
+            logger.info("Looking up user by email: %s", email_norm)
+
+            q = (db.collection("users")
+                   .where("email", "==", email_norm)
+                   .limit(1)
+                   .stream())
+            snap = next(q, None)
+
+            if not snap:
+                logger.warning("User not found for email: %s", email_norm)
                 raise HTTPException(status_code=404, detail="User not found")
 
-            user_doc_ref = db.collection("users").document(uid)
-            user_doc = user_doc_ref.get()
-            if not user_doc.exists:
-                user_doc_ref.set({
-                    "email": email,
-                    "full_name": getattr(user_record, 'display_name', "") or "",
-                    "university": None,
-                    "state": None,
-                    "role": None,
-                    "created_at": datetime.datetime.utcnow(),
-                    "karma": 0,
-                })
-                data = user_doc_ref.get().to_dict()
-            else:
-                data = user_doc.to_dict()
+            data = snap.to_dict() or {}
+            logger.info("Found user by email: %s (uid=%s)", email_norm, snap.id)
 
             return UserProfile(
-                user_id=uid,
-                email=data.get("email", ""),
+                user_id=snap.id,
+                email=data.get("email", email_norm),
                 full_name=data.get("full_name", ""),
                 university=data.get("university"),
                 state=data.get("state"),
                 role=data.get("role"),
             )
 
-        # No email param: use current_user
-        uid = current_user.get('uid')
-        user_doc = db.collection("users").document(uid).get()
-        if not user_doc.exists:
-            raise HTTPException(status_code=404, detail="User profile not found")
-        data = user_doc.to_dict()
+        # ---- Current user (by UID) ----
+        uid = (current_user or {}).get("uid")
+        logger.info("Looking up user by UID: %s", uid)
+
+        if not uid:
+            logger.error("Unauthenticated request (no uid).")
+            raise HTTPException(status_code=401, detail="Unauthenticated")
+
+        doc = db.collection("users").document(uid).get()
+
+        if not doc.exists:
+            logger.warning("User not found for uid: %s", uid)
+            raise HTTPException(status_code=404, detail="User not found")
+
+        data = doc.to_dict() or {}
+        logger.info("Found user by uid: %s", uid)
+
         return UserProfile(
             user_id=uid,
-            email=data.get("email", ""),
+            email=(data.get("email") or "").lower(),
             full_name=data.get("full_name", ""),
             university=data.get("university"),
             state=data.get("state"),
             role=data.get("role"),
         )
+
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Failed to load profile: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to load profile: {str(e)}")
-
+    
 @app.put("/api/v1/users/me")
-async def update_me(payload: ProfileUpdateRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
-    """Update current user's profile. If email is provided, resolve via Firebase Auth and upsert by uid."""
+async def update_me(
+    payload: ProfileUpdateRequest, 
+    email: Optional[str] = Query(None),  # Add Query here for consistency
+    current_user: dict = Depends(mock_get_current_user)
+):
+    """Update current user's profile."""
+    print(f"🔵 Update profile called with email: {email}")
+    print(f"🔵 Payload: {payload.model_dump()}")
+    
     try:
         update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+        
         if not update_data:
-            return {"message": "No changes"}
+            raise HTTPException(status_code=400, detail="No data to update")
 
         if email:
-            try:
-                user_record = auth.get_user_by_email(email)
-                uid = user_record.uid
-            except Exception:
+            email_norm = email.strip().lower()
+            print(f"🔵 Looking up user by email: {email_norm}")
+            
+            # Use stream() and check if we got results
+            user_docs = list(db.collection("users").where("email", "==", email_norm).limit(1).stream())
+            
+            if not user_docs:  # Now this check will work correctly
+                print(f"🔴 User not found for email: {email_norm}")
                 raise HTTPException(status_code=404, detail="User not found")
-            db.collection("users").document(uid).set({
-                "email": email,
-                **update_data
-            }, merge=True)
+            
+            user_doc = user_docs[0]
+            print(f"🟢 Found user with ID: {user_doc.id}")
+            
+            # Use set with merge=True instead of update
+            db.collection("users").document(user_doc.id).set(update_data, merge=True)
+            print(f"🟢 Profile updated successfully")
         else:
             uid = current_user.get('uid')
+            print(f"🔵 Using current_user uid: {uid}")
             db.collection("users").document(uid).set(update_data, merge=True)
+
         return {"message": "Profile updated"}
     except HTTPException:
         raise
     except Exception as e:
+        print(f"🔴 Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
-
 # -------------------------------
 # AI STUDY BOT ENDPOINTS
 # -------------------------------
@@ -1545,3 +1577,4 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
+

@@ -20,7 +20,40 @@ class ApiService {
     };
   }
   
+  /*class ApiService { (to add but i havent added firebase json yet given how we need an android package name first)
+  static Future<Map<String, dynamic>> login(String email, String password) async {
+    try {
+      // First, get custom token from your backend
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': email,
+          'password': password,
+        }),
+      );
 
+      if (response.statusCode != 200) {
+        throw Exception('Login failed: ${response.body}');
+      }
+
+      final data = jsonDecode(response.body);
+      final customToken = data['custom_token'];
+
+      // Exchange custom token for ID token using Firebase Auth
+      final FirebaseAuth auth = FirebaseAuth.instance;
+      final userCredential = await auth.signInWithCustomToken(customToken);
+      final idToken = await userCredential.user?.getIdToken();
+
+     
+      authToken = idToken;
+
+      return data;
+    } catch (e) {
+      throw Exception('Login failed: $e');
+    }
+  }
+}*/
 
   static Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await http.post(
@@ -230,29 +263,49 @@ class ApiService {
     }
   }
 
-  static Future<void> updateProfile({
-    required String role,
-    required String university,
-    required String state,
-    String? token,
+  static Future<Map<String, dynamic>> updateProfile({
+    String? role,
+    String? university,
+    String? state,
     String? email,
   }) async {
-    final headers = _buildHeaders(token: token);
-    final body = jsonEncode({
-      'role': role,
-      'university': university,
-      'state': state,
-    });
-    final uri = Uri.parse('$baseUrl/users/me').replace(queryParameters: {
-      if (email != null) 'email': email,
-    });
-    final response = await http.put(
-      uri,
-      headers: headers,
-      body: body,
-    );
-    if (response.statusCode != 200) {
-      throw Exception('Update profile failed: ${response.body}');
+    print('📱 updateProfile called');
+    print('📱 Email: $email');
+    print('📱 Role: $role');
+    print('📱 University: $university');
+    print('📱 State: $state');
+    
+    final body = <String, dynamic>{};
+    if (role != null) body['role'] = role;
+    if (university != null) body['university'] = university;
+    if (state != null) body['state'] = state;
+
+    print('📱 Request body: $body');
+
+    final uri = email != null 
+      ? Uri.parse('$baseUrl/users/me?email=${Uri.encodeComponent(email)}')
+      : Uri.parse('$baseUrl/users/me');
+    
+    print('📱 Request URI: $uri');
+
+    try {
+      final response = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+
+      print('📱 Response status: ${response.statusCode}');
+      print('📱 Response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Update profile failed: ${response.body}');
+      }
+    } catch (e) {
+      print('📱 Error: $e');
+      rethrow;
     }
   }
     static Future<Map<String, dynamic>> getUserClasses({String? token}) async {
