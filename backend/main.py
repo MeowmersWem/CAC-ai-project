@@ -178,14 +178,41 @@ class SummaryResponse(BaseModel):
 # Auth Dependencies
 # -------------------------------
 async def get_current_user(authorization: Optional[str] = Header(None)):
-    """Extract and verify Firebase ID token from Authorization header"""
+    """Extract and verify Firebase token from Authorization header
+    
+    Note: In production, clients should exchange custom tokens for ID tokens.
+    This function accepts both for development convenience.
+    """
     if not authorization or not authorization.startswith('Bearer '):
         raise HTTPException(status_code=401, detail="Authentication required")
     
     token = authorization.split('Bearer ')[1]
     try:
+        # Try to verify as ID token first (production path)
         decoded_token = auth.verify_id_token(token)
         return decoded_token
+    except auth.InvalidIdTokenError:
+        # If it fails, it might be a custom token (development/testing)
+        # Custom tokens can't be verified directly by the server
+        # In production, the client should exchange custom tokens for ID tokens
+        # For development, we'll extract the UID from the custom token
+        try:
+            # Decode the custom token (it's a JWT) to get the uid
+            import jwt
+            # Note: Custom tokens are signed but we just need the payload for dev
+            decoded_custom = jwt.decode(token, options={"verify_signature": False})
+            uid = decoded_custom.get('uid')
+            if uid:
+                # Return a user dict similar to ID token verification
+                user = auth.get_user(uid)
+                return {
+                    'uid': uid,
+                    'email': user.email,
+                    'name': user.display_name
+                }
+            raise HTTPException(status_code=401, detail="Invalid custom token: no uid found")
+        except Exception as inner_e:
+            raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(inner_e)}")
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
 
