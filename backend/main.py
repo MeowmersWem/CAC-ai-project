@@ -23,28 +23,28 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel 
-# Load environment variables
+
 load_dotenv()
 
-# ---- Logging setup (top of file) ----
+# ---- Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 )
-logger = logging.getLogger("api")  # use this one everywhere
+logger = logging.getLogger("api") 
 
 # Initialize Firebase Admin SDK
 if not firebase_admin._apps:
     try:
-        # Resolve service account path relative to this file for stable local dev
+       
         service_account_path = os.path.join(os.path.dirname(__file__), "serviceAccountKey.json")
 
-        # Try service account key first (development)
+       
         if os.path.exists(service_account_path):
             cred = credentials.Certificate(service_account_path)
             print("✅ Using service account key")
         else:
-            # Fallback to application default credentials (production)
+          
             cred = credentials.ApplicationDefault()
             print("✅ Using application default credentials")
         
@@ -57,17 +57,16 @@ if not firebase_admin._apps:
 db = firestore.client()
 app = FastAPI(title="Classroom API", version="1.0.0")
 
-# CORS middleware for frontend integration
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly for production
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Reserved for future auth middleware
-# security = HTTPBearer()
+
 
 # -------------------------------
 # Pydantic Models
@@ -159,7 +158,7 @@ class AIStudyWithFilesRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     class_context: Optional[str] = None
-    file_types: List[str] = []  # Track what types of files were uploaded
+    file_types: List[str] = []  
 
 
 class NoteSummaryRequest(BaseModel):
@@ -176,7 +175,7 @@ class NoteSummary(BaseModel):
     difficulty_level: str  # "beginner", "intermediate", "advanced"
     estimated_study_time: str  # "30 minutes", "1 hour", etc.
     created_at: str
-    file_sources: List[str]  # Original filenames
+    file_sources: List[str]  
     class_id: Optional[str] = None
     user_id: str
 
@@ -199,7 +198,7 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
 
-# Mock auth for development/testing
+
 async def get_current_user(authorization: Optional[str] = Header(None)):
     """Extract and verify Firebase ID token from Authorization header"""
     if not authorization or not authorization.startswith('Bearer '):
@@ -235,12 +234,12 @@ def get_ai_response(conversation_history: List[Dict], api_key: str, class_contex
         "Content-Type": "application/json"
     }
     
-    # Enhance system prompt with class context if available
+ 
     system_message = conversation_history[0].copy()
     if class_context:
         system_message["content"] += f"\n\nClass Context: {class_context}"
     
-    # Update the conversation with enhanced context
+
     enhanced_history = [system_message] + conversation_history[1:]
     
     data = {
@@ -263,7 +262,7 @@ def get_ai_response(conversation_history: List[Dict], api_key: str, class_contex
 def get_class_context(class_id: str, db) -> str:
     """Get recent class context for AI conversations"""
     try:
-        # Get class info
+     
         class_doc = db.collection("classes").document(class_id).get()
         if not class_doc.exists:
             return ""
@@ -271,7 +270,7 @@ def get_class_context(class_id: str, db) -> str:
         class_data = class_doc.to_dict()
         class_name = class_data.get("name", "")
         
-        # Get recent posts for context (last 3 posts)
+    
         recent_posts = (db.collection("classes").document(class_id)
                        .collection("posts")
                        .order_by("createdAt", direction=firestore.Query.DESCENDING)
@@ -296,7 +295,7 @@ def get_ai_response_with_files(conversation_history: List[Dict], api_key: str,
         "Content-Type": "application/json"
     }
     
-    # Enhance system prompt for file analysis
+
     system_message = conversation_history[0].copy()
     if files_content:
         system_message["content"] += "\n\nYou can analyze uploaded files (PDFs and images). When files are provided, analyze their content and help the student understand the material through guiding questions."
@@ -310,13 +309,13 @@ def get_ai_response_with_files(conversation_history: List[Dict], api_key: str,
     if files_content and enhanced_history:
         last_message = enhanced_history[-1]
         if last_message.get("role") == "user":
-            # For OpenAI GPT-4 Vision API
+           
             if any(f["type"] == "image" for f in files_content):
                 last_message["content"] = [
                     {"type": "text", "text": last_message["content"]}
                 ] + files_content
             else:
-                # For text content from PDFs
+          
                 text_content = "\n\n".join([f["content"] for f in files_content if f["type"] == "text"])
                 last_message["content"] += f"\n\nFile content:\n{text_content}"
     
@@ -363,7 +362,7 @@ def get_structured_summary(file_content: str, api_key: str, user_title: str = No
             {"role": "user", "content": user_message}
         ],
         "max_tokens": 800,
-        "temperature": 0.3  # Lower temperature for more consistent JSON
+        "temperature": 0.3  
     }
     
     try:
@@ -373,12 +372,12 @@ def get_structured_summary(file_content: str, api_key: str, user_title: str = No
         
         ai_response = result["choices"][0]["message"]["content"].strip()
         
-        # Parse JSON response
+        
         try:
             summary_data = json.loads(ai_response)
             return summary_data
         except json.JSONDecodeError as e:
-            # Fallback: try to extract JSON from response if AI added extra text
+            
             import re
             json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
             if json_match:
@@ -410,7 +409,7 @@ async def signup(request: SignupRequest):
             display_name=request.full_name
         )
         
-        # Create user profile in Firestore
+        # Create user profile
         user_data = {
             "email": request.email,
             "full_name": request.full_name,
@@ -464,7 +463,7 @@ async def google_auth(request: GoogleAuthRequest):
         decoded_token = auth.verify_id_token(request.id_token)
         uid = decoded_token['uid']
         
-        # Check if user exists, create if not
+       
         user_doc = db.collection("users").document(uid).get()
         if not user_doc.exists:
             user_data = {
@@ -490,8 +489,7 @@ async def google_auth(request: GoogleAuthRequest):
 @app.post("/api/v1/auth/signout")
 async def signout(current_user: dict = Depends(mock_get_current_user)):
     """Sign out current user"""
-    # In Firebase, sign out is typically handled on the frontend
-    # Backend can revoke tokens if needed
+  
     try:
         auth.revoke_refresh_tokens(current_user['uid'])
         return {"message": "Successfully signed out"}
@@ -593,10 +591,10 @@ async def update_me(
             email_norm = email.strip().lower()
             print(f"🔵 Looking up user by email: {email_norm}")
             
-            # Use stream() and check if we got results
+            
             user_docs = list(db.collection("users").where("email", "==", email_norm).limit(1).stream())
             
-            if not user_docs:  # Now this check will work correctly
+            if not user_docs: 
                 print(f"🔴 User not found for email: {email_norm}")
                 raise HTTPException(status_code=404, detail="User not found")
             
@@ -668,7 +666,7 @@ async def chat_with_study_buddy(
         if not OPENAI_API_KEY or OPENAI_API_KEY == "your-openai-api-key-here":
             raise HTTPException(status_code=503, detail="AI service not configured")
         
-        # Generate or use existing conversation ID
+        
         conversation_id = request.conversation_id or str(uuid.uuid4())
         
         # Get or create conversation history
@@ -679,23 +677,23 @@ async def chat_with_study_buddy(
             conv_data = conv_doc.to_dict()
             conversation_history = conv_data.get("messages", [])
         else:
-            # Initialize new conversation with system prompt
+            
             conversation_history = [
                 {"role": "system", "content": STUDY_BUDDY_SYSTEM_PROMPT}
             ]
         
-        # Add user message to history
+       
         conversation_history.append({"role": "user", "content": request.message})
         
-        # Get class context if provided
+       
         class_context = ""
         if request.class_context:
             class_context = get_class_context(request.class_context, db)
         
-        # Get AI response
+      
         ai_response = get_ai_response(conversation_history, OPENAI_API_KEY, class_context)
         
-        # Add AI response to history
+      
         conversation_history.append({"role": "assistant", "content": ai_response})
         
         # Save conversation to Firestore
@@ -735,7 +733,7 @@ async def get_study_buddy_conversations(
         conversation_list = []
         for conv in conversations:
             conv_data = conv.to_dict()
-            # Get the first user message as preview
+          
             first_message = ""
             for msg in conv_data.get("messages", []):
                 if msg.get("role") == "user":
@@ -808,7 +806,7 @@ async def class_specific_study_buddy(
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        # Set class context and call main study buddy endpoint
+        
         request.class_context = class_id
         return await chat_with_study_buddy(request, current_user)
         
@@ -817,7 +815,7 @@ async def class_specific_study_buddy(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Class study buddy error: {str(e)}")
 
-# Add this endpoint to integrate AI suggestions with posts
+
 @app.post("/api/v1/classes/{class_id}/posts/{post_id}/ai-help")
 async def get_ai_help_for_post(
     class_id: str,
@@ -831,7 +829,7 @@ async def get_ai_help_for_post(
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        # Get post content
+        
         post_doc = (db.collection("classes").document(class_id)
                    .collection("posts").document(post_id).get())
         if not post_doc.exists:
@@ -839,7 +837,7 @@ async def get_ai_help_for_post(
         
         post_data = post_doc.to_dict()
         
-        # Create AI request based on post content
+       
         ai_request = AIStudyRequest(
             message=f"I'm looking at this post: '{post_data.get('title')}' - {post_data.get('content')[:200]}... Can you help me understand this better?",
             class_context=class_id
@@ -897,7 +895,7 @@ async def create_class(request: CreateClassRequest, email: Optional[str] = None,
         }
         class_ref.set(class_doc)
 
-        # Add creator as instructor member
+        
         member_doc = {
             "classId": class_id,
             "userId": creator_uid,
@@ -917,7 +915,7 @@ async def create_class(request: CreateClassRequest, email: Optional[str] = None,
 async def get_user_classes(current_user: dict = Depends(get_current_user)):
     """Get user's enrolled classes"""
     try:
-        # Get user's class memberships
+        
         memberships = db.collection("classMembers").where("userId", "==", current_user['uid']).stream()
         
         classes = []
@@ -925,7 +923,7 @@ async def get_user_classes(current_user: dict = Depends(get_current_user)):
             member_data = membership.to_dict()
             class_id = member_data.get("classId")
             
-            # Get class details
+          
             class_doc = db.collection("classes").document(class_id).get()
             if class_doc.exists:
                 class_data = class_doc.to_dict()
@@ -958,7 +956,7 @@ async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = N
         class_id = class_doc.id
         class_data = class_doc.to_dict()
         
-        # Resolve user id
+       
         if email:
             try:
                 user_record = auth.get_user_by_email(email)
@@ -973,7 +971,7 @@ async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = N
         if member_doc.exists:
             return {"message": "Already a member of this class", "class_id": class_id}
         
-        # Add as student
+        
         member_data = {
             "classId": class_id,
             "userId": uid,
@@ -997,19 +995,19 @@ async def get_class_details(class_id: str, limit: int = 20, offset: int = 0,
                            current_user: dict = Depends(get_current_user)):
     """Get class details and posts"""
     try:
-        # Verify user is member of class
+        
         member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        # Get class details
+        
         class_doc = db.collection("classes").document(class_id).get()
         if not class_doc.exists:
             raise HTTPException(status_code=404, detail="Class not found")
         
         class_data = class_doc.to_dict()
         
-        # Get posts with pagination
+       
         posts_query = (db.collection("classes").document(class_id)
                       .collection("posts")
                       .order_by("createdAt", direction=firestore.Query.DESCENDING)
@@ -1063,12 +1061,12 @@ async def create_post(class_id: str, request: CreatePostRequest,
                      current_user: dict = Depends(get_current_user)):
     """Create new post in class"""
     try:
-        # Verify user is member of class
+        
         member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        # Create post
+      
         post_ref = (db.collection("classes").document(class_id)
                    .collection("posts").document())
         
@@ -1097,7 +1095,7 @@ async def create_post(class_id: str, request: CreatePostRequest,
 async def create_assignment(class_id: str, request: CreateAssignmentRequest, current_user: dict = Depends(get_current_user)):
     """Create an assignment (instructors only)."""
     try:
-        # Verify membership and role
+        
         member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
