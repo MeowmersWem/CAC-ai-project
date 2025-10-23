@@ -19,32 +19,22 @@ import base64
 import PyPDF2
 from PIL import Image
 import io
-import logging
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel 
 
+# Load environment variables
 load_dotenv()
-
-# ---- Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-)
-logger = logging.getLogger("api") 
 
 # Initialize Firebase Admin SDK
 if not firebase_admin._apps:
     try:
-       
+        # Resolve service account path relative to this file for stable local dev
         service_account_path = os.path.join(os.path.dirname(__file__), "serviceAccountKey.json")
 
-       
+        # Try service account key first (development)
         if os.path.exists(service_account_path):
             cred = credentials.Certificate(service_account_path)
             print("✅ Using service account key")
         else:
-          
+            # Fallback to application default credentials (production)
             cred = credentials.ApplicationDefault()
             print("✅ Using application default credentials")
         
@@ -57,16 +47,17 @@ if not firebase_admin._apps:
 db = firestore.client()
 app = FastAPI(title="Classroom API", version="1.0.0")
 
-
+# CORS middleware for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],  # Configure this properly for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
+# Reserved for future auth middleware
+# security = HTTPBearer()
 
 # -------------------------------
 # Pydantic Models
@@ -158,7 +149,7 @@ class AIStudyWithFilesRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     class_context: Optional[str] = None
-    file_types: List[str] = []  
+    file_types: List[str] = []  # Track what types of files were uploaded
 
 
 class NoteSummaryRequest(BaseModel):
@@ -175,7 +166,7 @@ class NoteSummary(BaseModel):
     difficulty_level: str  # "beginner", "intermediate", "advanced"
     estimated_study_time: str  # "30 minutes", "1 hour", etc.
     created_at: str
-    file_sources: List[str]  
+    file_sources: List[str]  # Original filenames
     class_id: Optional[str] = None
     user_id: str
 
@@ -187,32 +178,53 @@ class SummaryResponse(BaseModel):
 # Auth Dependencies
 # -------------------------------
 async def get_current_user(authorization: Optional[str] = Header(None)):
-    """Extract and verify Firebase ID token from Authorization header"""
+    """Extract and verify Firebase token from Authorization header
+    
+    Note: In production, clients should exchange custom tokens for ID tokens.
+    This function accepts both for development convenience.
+    """
     if not authorization or not authorization.startswith('Bearer '):
         raise HTTPException(status_code=401, detail="Authentication required")
     
     token = authorization.split('Bearer ')[1]
     try:
+        # Try to verify as ID token first (production path)
         decoded_token = auth.verify_id_token(token)
         return decoded_token
+    except auth.InvalidIdTokenError:
+        # If it fails, it might be a custom token (development/testing)
+        # Custom tokens can't be verified directly by the server
+        # In production, the client should exchange custom tokens for ID tokens
+        # For development, we'll extract the UID from the custom token
+        try:
+            # Decode the custom token (it's a JWT) to get the uid
+            import jwt
+            # Note: Custom tokens are signed but we just need the payload for dev
+            decoded_custom = jwt.decode(token, options={"verify_signature": False})
+            uid = decoded_custom.get('uid')
+            if uid:
+                # Return a user dict similar to ID token verification
+                user = auth.get_user(uid)
+                return {
+                    'uid': uid,
+                    'email': user.email,
+                    'name': user.display_name
+                }
+            raise HTTPException(status_code=401, detail="Invalid custom token: no uid found")
+        except Exception as inner_e:
+            raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(inner_e)}")
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
 
+# Mock auth for development/testing
+async def mock_get_current_user():
+    """Mock user for testing - replace with real auth in production"""
+    return {
+        'uid': 'test_user_id',
+        'email': 'test@example.com',
+        'name': 'Test User'
+    }
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    """Extract and verify Firebase ID token from Authorization header"""
-    if not authorization or not authorization.startswith('Bearer '):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    try:
-        token = authorization.split('Bearer ')[1]
-        decoded_token = auth.verify_id_token(token)
-        return decoded_token
-    except Exception as e:
-        raise HTTPException(
-            status_code=401, 
-            detail=f"Invalid authentication token: {str(e)}"
-        )
 # -------------------------------
 # Utility Functions
 # -------------------------------
@@ -234,12 +246,12 @@ def get_ai_response(conversation_history: List[Dict], api_key: str, class_contex
         "Content-Type": "application/json"
     }
     
- 
+    # Enhance system prompt with class context if available
     system_message = conversation_history[0].copy()
     if class_context:
         system_message["content"] += f"\n\nClass Context: {class_context}"
     
-
+    # Update the conversation with enhanced context
     enhanced_history = [system_message] + conversation_history[1:]
     
     data = {
@@ -262,7 +274,7 @@ def get_ai_response(conversation_history: List[Dict], api_key: str, class_contex
 def get_class_context(class_id: str, db) -> str:
     """Get recent class context for AI conversations"""
     try:
-     
+        # Get class info
         class_doc = db.collection("classes").document(class_id).get()
         if not class_doc.exists:
             return ""
@@ -270,7 +282,7 @@ def get_class_context(class_id: str, db) -> str:
         class_data = class_doc.to_dict()
         class_name = class_data.get("name", "")
         
-    
+        # Get recent posts for context (last 3 posts)
         recent_posts = (db.collection("classes").document(class_id)
                        .collection("posts")
                        .order_by("createdAt", direction=firestore.Query.DESCENDING)
@@ -295,7 +307,7 @@ def get_ai_response_with_files(conversation_history: List[Dict], api_key: str,
         "Content-Type": "application/json"
     }
     
-
+    # Enhance system prompt for file analysis
     system_message = conversation_history[0].copy()
     if files_content:
         system_message["content"] += "\n\nYou can analyze uploaded files (PDFs and images). When files are provided, analyze their content and help the student understand the material through guiding questions."
@@ -309,13 +321,13 @@ def get_ai_response_with_files(conversation_history: List[Dict], api_key: str,
     if files_content and enhanced_history:
         last_message = enhanced_history[-1]
         if last_message.get("role") == "user":
-           
+            # For OpenAI GPT-4 Vision API
             if any(f["type"] == "image" for f in files_content):
                 last_message["content"] = [
                     {"type": "text", "text": last_message["content"]}
                 ] + files_content
             else:
-          
+                # For text content from PDFs
                 text_content = "\n\n".join([f["content"] for f in files_content if f["type"] == "text"])
                 last_message["content"] += f"\n\nFile content:\n{text_content}"
     
@@ -362,7 +374,7 @@ def get_structured_summary(file_content: str, api_key: str, user_title: str = No
             {"role": "user", "content": user_message}
         ],
         "max_tokens": 800,
-        "temperature": 0.3  
+        "temperature": 0.3  # Lower temperature for more consistent JSON
     }
     
     try:
@@ -372,12 +384,12 @@ def get_structured_summary(file_content: str, api_key: str, user_title: str = No
         
         ai_response = result["choices"][0]["message"]["content"].strip()
         
-        
+        # Parse JSON response
         try:
             summary_data = json.loads(ai_response)
             return summary_data
         except json.JSONDecodeError as e:
-            
+            # Fallback: try to extract JSON from response if AI added extra text
             import re
             json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
             if json_match:
@@ -391,13 +403,10 @@ def get_structured_summary(file_content: str, api_key: str, user_title: str = No
         raise HTTPException(status_code=500, detail=f"Summary processing error: {str(e)}")
 
 
-@app.get("/__routes")
-def __routes():
-    return {"routes": [getattr(r, "path", str(r)) for r in app.routes]}
+
 # -------------------------------
 # AUTH ENDPOINTS
 # -------------------------------
-
 @app.post("/api/v1/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest):
     """Register new user account"""
@@ -409,7 +418,7 @@ async def signup(request: SignupRequest):
             display_name=request.full_name
         )
         
-        # Create user profile
+        # Create user profile in Firestore
         user_data = {
             "email": request.email,
             "full_name": request.full_name,
@@ -436,11 +445,13 @@ async def signup(request: SignupRequest):
 @app.post("/api/v1/auth/login")
 async def login(request: LoginRequest):
     """Authenticate user login"""
+    # Note: Firebase Admin SDK doesn't handle password authentication directly
+    # You'll need to use Firebase Auth REST API or handle this on the frontend
+    # This is a placeholder implementation
     try:
-        # Get user by email
+        # In a real implementation, you'd verify credentials via Firebase Auth REST API
+        # or handle this entirely on the frontend
         user = auth.get_user_by_email(request.email)
-        
-        # Create custom token
         custom_token = auth.create_custom_token(user.uid)
         
         # Get user profile
@@ -451,10 +462,10 @@ async def login(request: LoginRequest):
             "user_id": user.uid,
             "email": user.email,
             "full_name": user_data.get("full_name", ""),
-            "custom_token": custom_token.decode('utf-8'),  # Renamed from 'token' to be explicit
+            "token": custom_token.decode('utf-8')
         }
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid credentials: {str(e)}")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/v1/auth/google")
 async def google_auth(request: GoogleAuthRequest):
@@ -463,7 +474,7 @@ async def google_auth(request: GoogleAuthRequest):
         decoded_token = auth.verify_id_token(request.id_token)
         uid = decoded_token['uid']
         
-       
+        # Check if user exists, create if not
         user_doc = db.collection("users").document(uid).get()
         if not user_doc.exists:
             user_data = {
@@ -489,7 +500,8 @@ async def google_auth(request: GoogleAuthRequest):
 @app.post("/api/v1/auth/signout")
 async def signout(current_user: dict = Depends(mock_get_current_user)):
     """Sign out current user"""
-  
+    # In Firebase, sign out is typically handled on the frontend
+    # Backend can revoke tokens if needed
     try:
         auth.revoke_refresh_tokens(current_user['uid'])
         return {"message": "Successfully signed out"}
@@ -501,120 +513,105 @@ async def signout(current_user: dict = Depends(mock_get_current_user)):
 # -------------------------------
 
 @app.get("/api/v1/users/me", response_model=UserProfile)
-async def get_me(
-    email: Optional[str] = Query(None),
-    current_user: dict = Depends(mock_get_current_user)  # or get_current_user if you’ve switched
-):
+async def get_me(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Get current user's profile.
+    - If email is provided, resolve via Firestore users.email == email; if missing, try Firebase Auth to get uid and upsert a minimal profile.
+    - If no email is provided, use current_user.uid.
     """
-    If ?email= is provided, look up by email.
-    Otherwise return the current signed-in user's profile.
-    """
-    logger.info("GET /api/v1/users/me | email=%s | uid=%s", email, (current_user or {}).get("uid"))
-
     try:
-        # ---- Lookup by email (query param) ----
         if email:
-            email_norm = email.strip().lower()
-            logger.info("Looking up user by email: %s", email_norm)
+            # First, try Firestore by email
+            users_q = list(db.collection("users").where("email", "==", email).limit(1).stream())
+            if users_q:
+                doc = users_q[0]
+                data = doc.to_dict()
+                return UserProfile(
+                    user_id=doc.id,
+                    email=data.get("email", ""),
+                    full_name=data.get("full_name", ""),
+                    university=data.get("university"),
+                    state=data.get("state"),
+                    role=data.get("role"),
+                )
 
-            q = (db.collection("users")
-                   .where("email", "==", email_norm)
-                   .limit(1)
-                   .stream())
-            snap = next(q, None)
-
-            if not snap:
-                logger.warning("User not found for email: %s", email_norm)
+            # Not found in Firestore → try Firebase Auth and upsert
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            data = snap.to_dict() or {}
-            logger.info("Found user by email: %s (uid=%s)", email_norm, snap.id)
+            user_doc_ref = db.collection("users").document(uid)
+            user_doc = user_doc_ref.get()
+            if not user_doc.exists:
+                user_doc_ref.set({
+                    "email": email,
+                    "full_name": getattr(user_record, 'display_name', "") or "",
+                    "university": None,
+                    "state": None,
+                    "role": None,
+                    "created_at": datetime.datetime.utcnow(),
+                    "karma": 0,
+                })
+                data = user_doc_ref.get().to_dict()
+            else:
+                data = user_doc.to_dict()
 
             return UserProfile(
-                user_id=snap.id,
-                email=data.get("email", email_norm),
+                user_id=uid,
+                email=data.get("email", ""),
                 full_name=data.get("full_name", ""),
                 university=data.get("university"),
                 state=data.get("state"),
                 role=data.get("role"),
             )
 
-        # ---- Current user (by UID) ----
-        uid = (current_user or {}).get("uid")
-        logger.info("Looking up user by UID: %s", uid)
-
-        if not uid:
-            logger.error("Unauthenticated request (no uid).")
-            raise HTTPException(status_code=401, detail="Unauthenticated")
-
-        doc = db.collection("users").document(uid).get()
-
-        if not doc.exists:
-            logger.warning("User not found for uid: %s", uid)
-            raise HTTPException(status_code=404, detail="User not found")
-
-        data = doc.to_dict() or {}
-        logger.info("Found user by uid: %s", uid)
-
+        # No email param: use current_user
+        uid = current_user.get('uid')
+        user_doc = db.collection("users").document(uid).get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User profile not found")
+        data = user_doc.to_dict()
         return UserProfile(
             user_id=uid,
-            email=(data.get("email") or "").lower(),
+            email=data.get("email", ""),
             full_name=data.get("full_name", ""),
             university=data.get("university"),
             state=data.get("state"),
             role=data.get("role"),
         )
-
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to load profile: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to load profile: {str(e)}")
-    
+
 @app.put("/api/v1/users/me")
-async def update_me(
-    payload: ProfileUpdateRequest, 
-    email: Optional[str] = Query(None),  # Add Query here for consistency
-    current_user: dict = Depends(mock_get_current_user)
-):
-    """Update current user's profile."""
-    print(f"🔵 Update profile called with email: {email}")
-    print(f"🔵 Payload: {payload.model_dump()}")
-    
+async def update_me(payload: ProfileUpdateRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Update current user's profile. If email is provided, resolve via Firebase Auth and upsert by uid."""
     try:
         update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
-        
         if not update_data:
-            raise HTTPException(status_code=400, detail="No data to update")
+            return {"message": "No changes"}
 
         if email:
-            email_norm = email.strip().lower()
-            print(f"🔵 Looking up user by email: {email_norm}")
-            
-            
-            user_docs = list(db.collection("users").where("email", "==", email_norm).limit(1).stream())
-            
-            if not user_docs: 
-                print(f"🔴 User not found for email: {email_norm}")
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
                 raise HTTPException(status_code=404, detail="User not found")
-            
-            user_doc = user_docs[0]
-            print(f"🟢 Found user with ID: {user_doc.id}")
-            
-            # Use set with merge=True instead of update
-            db.collection("users").document(user_doc.id).set(update_data, merge=True)
-            print(f"🟢 Profile updated successfully")
+            db.collection("users").document(uid).set({
+                "email": email,
+                **update_data
+            }, merge=True)
         else:
             uid = current_user.get('uid')
-            print(f"🔵 Using current_user uid: {uid}")
             db.collection("users").document(uid).set(update_data, merge=True)
-
         return {"message": "Profile updated"}
     except HTTPException:
         raise
     except Exception as e:
-        print(f"🔴 Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
+
 # -------------------------------
 # AI STUDY BOT ENDPOINTS
 # -------------------------------
@@ -666,7 +663,7 @@ async def chat_with_study_buddy(
         if not OPENAI_API_KEY or OPENAI_API_KEY == "your-openai-api-key-here":
             raise HTTPException(status_code=503, detail="AI service not configured")
         
-        
+        # Generate or use existing conversation ID
         conversation_id = request.conversation_id or str(uuid.uuid4())
         
         # Get or create conversation history
@@ -677,23 +674,23 @@ async def chat_with_study_buddy(
             conv_data = conv_doc.to_dict()
             conversation_history = conv_data.get("messages", [])
         else:
-            
+            # Initialize new conversation with system prompt
             conversation_history = [
                 {"role": "system", "content": STUDY_BUDDY_SYSTEM_PROMPT}
             ]
         
-       
+        # Add user message to history
         conversation_history.append({"role": "user", "content": request.message})
         
-       
+        # Get class context if provided
         class_context = ""
         if request.class_context:
             class_context = get_class_context(request.class_context, db)
         
-      
+        # Get AI response
         ai_response = get_ai_response(conversation_history, OPENAI_API_KEY, class_context)
         
-      
+        # Add AI response to history
         conversation_history.append({"role": "assistant", "content": ai_response})
         
         # Save conversation to Firestore
@@ -733,7 +730,7 @@ async def get_study_buddy_conversations(
         conversation_list = []
         for conv in conversations:
             conv_data = conv.to_dict()
-          
+            # Get the first user message as preview
             first_message = ""
             for msg in conv_data.get("messages", []):
                 if msg.get("role") == "user":
@@ -806,7 +803,7 @@ async def class_specific_study_buddy(
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        
+        # Set class context and call main study buddy endpoint
         request.class_context = class_id
         return await chat_with_study_buddy(request, current_user)
         
@@ -815,7 +812,7 @@ async def class_specific_study_buddy(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Class study buddy error: {str(e)}")
 
-
+# Add this endpoint to integrate AI suggestions with posts
 @app.post("/api/v1/classes/{class_id}/posts/{post_id}/ai-help")
 async def get_ai_help_for_post(
     class_id: str,
@@ -829,7 +826,7 @@ async def get_ai_help_for_post(
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        
+        # Get post content
         post_doc = (db.collection("classes").document(class_id)
                    .collection("posts").document(post_id).get())
         if not post_doc.exists:
@@ -837,7 +834,7 @@ async def get_ai_help_for_post(
         
         post_data = post_doc.to_dict()
         
-       
+        # Create AI request based on post content
         ai_request = AIStudyRequest(
             message=f"I'm looking at this post: '{post_data.get('title')}' - {post_data.get('content')[:200]}... Can you help me understand this better?",
             class_context=class_id
@@ -895,7 +892,7 @@ async def create_class(request: CreateClassRequest, email: Optional[str] = None,
         }
         class_ref.set(class_doc)
 
-        
+        # Add creator as instructor member
         member_doc = {
             "classId": class_id,
             "userId": creator_uid,
@@ -912,18 +909,28 @@ async def create_class(request: CreateClassRequest, email: Optional[str] = None,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create class: {str(e)}")
 @app.get("/api/v1/classes")
-async def get_user_classes(current_user: dict = Depends(get_current_user)):
-    """Get user's enrolled classes"""
+async def get_user_classes(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Get user's enrolled classes. In dev, allow ?email=... to resolve uid via Firebase Auth."""
     try:
-        
-        memberships = db.collection("classMembers").where("userId", "==", current_user['uid']).stream()
+        # Resolve uid from email if provided (dev convenience), else use current user
+        if email:
+            try:
+                user_record = auth.get_user_by_email(email)
+                resolved_uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+        else:
+            resolved_uid = current_user['uid']
+
+        # Get user's class memberships
+        memberships = db.collection("classMembers").where("userId", "==", resolved_uid).stream()
         
         classes = []
         for membership in memberships:
             member_data = membership.to_dict()
             class_id = member_data.get("classId")
             
-          
+            # Get class details
             class_doc = db.collection("classes").document(class_id).get()
             if class_doc.exists:
                 class_data = class_doc.to_dict()
@@ -956,7 +963,7 @@ async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = N
         class_id = class_doc.id
         class_data = class_doc.to_dict()
         
-       
+        # Resolve user id
         if email:
             try:
                 user_record = auth.get_user_by_email(email)
@@ -971,7 +978,7 @@ async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = N
         if member_doc.exists:
             return {"message": "Already a member of this class", "class_id": class_id}
         
-        
+        # Add as student
         member_data = {
             "classId": class_id,
             "userId": uid,
@@ -995,19 +1002,19 @@ async def get_class_details(class_id: str, limit: int = 20, offset: int = 0,
                            current_user: dict = Depends(get_current_user)):
     """Get class details and posts"""
     try:
-        
+        # Verify user is member of class
         member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-        
+        # Get class details
         class_doc = db.collection("classes").document(class_id).get()
         if not class_doc.exists:
             raise HTTPException(status_code=404, detail="Class not found")
         
         class_data = class_doc.to_dict()
         
-       
+        # Get posts with pagination
         posts_query = (db.collection("classes").document(class_id)
                       .collection("posts")
                       .order_by("createdAt", direction=firestore.Query.DESCENDING)
@@ -1056,17 +1063,74 @@ async def get_class_details(class_id: str, limit: int = 20, offset: int = 0,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get class details: {str(e)}")
 
+@app.delete("/api/v1/classes/{class_id}")
+async def delete_class(class_id: str, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+    """Delete a class and related data (instructors only; creator can delete).
+    In dev, allow ?email=... to resolve the actor via Firebase Auth.
+    """
+    try:
+        # Resolve acting uid
+        if email:
+            try:
+                user_record = auth.get_user_by_email(email)
+                uid = user_record.uid
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found")
+        else:
+            uid = current_user.get('uid')
+
+        # Verify class exists
+        class_ref = db.collection("classes").document(class_id)
+        class_doc = class_ref.get()
+        if not class_doc.exists:
+            raise HTTPException(status_code=404, detail="Class not found")
+        class_data = class_doc.to_dict()
+
+        # Verify user is instructor and creator
+        creator_uid = class_data.get("createdBy")
+        member_doc = db.collection("classMembers").document(f"{class_id}_{uid}").get()
+        if not member_doc.exists or member_doc.to_dict().get("role") != "instructor" or uid != creator_uid:
+            raise HTTPException(status_code=403, detail="Only the creating instructor can delete this class")
+
+        # Best-effort delete subcollections
+        def _delete_subcollection(parent_ref, sub_name):
+            try:
+                for doc in parent_ref.collection(sub_name).stream():
+                    doc.reference.delete()
+            except Exception:
+                pass
+
+        _delete_subcollection(class_ref, "posts")
+        _delete_subcollection(class_ref, "assignments")
+        _delete_subcollection(class_ref, "grades")
+
+        # Delete memberships for this class
+        try:
+            for m in db.collection("classMembers").where("classId", "==", class_id).stream():
+                m.reference.delete()
+        except Exception:
+            pass
+
+        # Finally delete the class document
+        class_ref.delete()
+
+        return {"message": "Class deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete class: {str(e)}")
+
 @app.post("/api/v1/classes/{class_id}/posts")
 async def create_post(class_id: str, request: CreatePostRequest, 
                      current_user: dict = Depends(get_current_user)):
     """Create new post in class"""
     try:
-        
+        # Verify user is member of class
         member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
         
-      
+        # Create post
         post_ref = (db.collection("classes").document(class_id)
                    .collection("posts").document())
         
@@ -1095,7 +1159,7 @@ async def create_post(class_id: str, request: CreatePostRequest,
 async def create_assignment(class_id: str, request: CreateAssignmentRequest, current_user: dict = Depends(get_current_user)):
     """Create an assignment (instructors only)."""
     try:
-        
+        # Verify membership and role
         member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
         if not member_doc.exists:
             raise HTTPException(status_code=403, detail="Not a member of this class")
@@ -1177,6 +1241,26 @@ async def get_class_roster(class_id: str, current_user: dict = Depends(get_curre
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get roster: {str(e)}")
+
+@app.delete("/api/v1/classes/{class_id}/roster/{student_id}")
+async def remove_student_from_class(class_id: str, student_id: str, current_user: dict = Depends(get_current_user)):
+    """Remove a student from a class (instructors only)."""
+    try:
+        member_doc = db.collection("classMembers").document(f"{class_id}_{current_user['uid']}").get()
+        if not member_doc.exists or member_doc.to_dict().get("role") != "instructor":
+            raise HTTPException(status_code=403, detail="Only instructors can remove students")
+
+        # Ensure target student is in class
+        target_doc = db.collection("classMembers").document(f"{class_id}_{student_id}").get()
+        if not target_doc.exists:
+            raise HTTPException(status_code=404, detail="Student not in this class")
+
+        db.collection("classMembers").document(f"{class_id}_{student_id}").delete()
+        return {"message": "Student removed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove student: {str(e)}")
 
 @app.post("/api/v1/classes/{class_id}/grades/set")
 async def set_student_grade(class_id: str, request: SetGradeRequest, student_id: str, current_user: dict = Depends(get_current_user)):
@@ -1575,4 +1659,3 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
