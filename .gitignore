@@ -1,0 +1,14 @@
+# Sensitive Firebase files
+**/serviceAccountKey.json
+
+# Environment files
+**/.env
+**/.env.*
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.so
+
+# Keep google-services.json tracked (public Android config)
+!**/google-services.json

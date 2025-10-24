@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Dict
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 import random
@@ -11,7 +11,6 @@ import datetime
 import json
 import os
 import requests
-from typing import Dict, List
 import uuid
 from dotenv import load_dotenv
 from fastapi import UploadFile
@@ -178,43 +177,37 @@ class SummaryResponse(BaseModel):
 # Auth Dependencies
 # -------------------------------
 async def get_current_user(authorization: Optional[str] = Header(None)):
-    """Extract and verify Firebase token from Authorization header
-    
-    Note: In production, clients should exchange custom tokens for ID tokens.
-    This function accepts both for development convenience.
-    """
+    """Extract and verify Firebase token from Authorization header"""
     if not authorization or not authorization.startswith('Bearer '):
         raise HTTPException(status_code=401, detail="Authentication required")
     
     token = authorization.split('Bearer ')[1]
     try:
-        # Try to verify as ID token first (production path)
-        decoded_token = auth.verify_id_token(token)
-        return decoded_token
-    except auth.InvalidIdTokenError:
-        # If it fails, it might be a custom token (development/testing)
-        # Custom tokens can't be verified directly by the server
-        # In production, the client should exchange custom tokens for ID tokens
-        # For development, we'll extract the UID from the custom token
+        # Production path: only accept ID tokens
+        if not DEV_MODE:
+            decoded_token = auth.verify_id_token(token)
+            return decoded_token
+            
+        # Development: allow custom tokens
         try:
-            # Decode the custom token (it's a JWT) to get the uid
+            # Try ID token first
+            decoded_token = auth.verify_id_token(token)
+            return decoded_token
+        except:
+            # Fallback to custom token in dev mode only
             import jwt
-            # Note: Custom tokens are signed but we just need the payload for dev
             decoded_custom = jwt.decode(token, options={"verify_signature": False})
             uid = decoded_custom.get('uid')
             if uid:
-                # Return a user dict similar to ID token verification
                 user = auth.get_user(uid)
                 return {
                     'uid': uid,
                     'email': user.email,
                     'name': user.display_name
                 }
-            raise HTTPException(status_code=401, detail="Invalid custom token: no uid found")
-        except Exception as inner_e:
-            raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(inner_e)}")
+            raise HTTPException(status_code=401, detail="Invalid custom token")
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
 # Mock auth for development/testing
 async def mock_get_current_user():
@@ -345,16 +338,32 @@ def get_ai_response_with_files(conversation_history: List[Dict], api_key: str,
 
 # File processing functions
 def extract_pdf_text(pdf_file: UploadFile) -> str:
-    pdf_reader = PyPDF2.PdfReader(pdf_file.file)
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text() + "\n"
-    return text
+    """Extract text from PDF with size validation and error handling"""
+    try:
+        validate_file_size(pdf_file)
+        pdf_reader = PyPDF2.PdfReader(pdf_file.file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text[:MAX_CONTENT_LENGTH]  # Limit content length
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF processing error: {str(e)}")
 
 def process_image(image_file: UploadFile) -> str:
-    image_bytes = image_file.file.read()
-    base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    return f"data:image/{image_file.filename.split('.')[-1]};base64,{base64_image}"    
+    """Process image with size validation and error handling"""
+    try:
+        validate_file_size(image_file)
+        image_bytes = image_file.file.read()
+        # Basic image validation
+        Image.open(io.BytesIO(image_bytes)).verify()
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        return f"data:image/{image_file.filename.split('.')[-1]};base64,{base64_image}"
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Image processing error: {str(e)}")
 
 def get_structured_summary(file_content: str, api_key: str, user_title: str = None) -> dict:
     """Get structured JSON summary from OpenAI"""
@@ -444,17 +453,24 @@ async def signup(request: SignupRequest):
 
 @app.post("/api/v1/auth/login")
 async def login(request: LoginRequest):
-    """Authenticate user login"""
-    # Note: Firebase Admin SDK doesn't handle password authentication directly
-    # You'll need to use Firebase Auth REST API or handle this on the frontend
-    # This is a placeholder implementation
+    """Authenticate user login using Firebase Auth REST API"""
     try:
-        # In a real implementation, you'd verify credentials via Firebase Auth REST API
-        # or handle this entirely on the frontend
-        user = auth.get_user_by_email(request.email)
-        custom_token = auth.create_custom_token(user.uid)
+        # Use Firebase Auth REST API for password verification
+        auth_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={os.getenv('FIREBASE_API_KEY')}"
+        response = requests.post(auth_url, json={
+            "email": request.email,
+            "password": request.password,
+            "returnSecureToken": True
+        })
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+        auth_data = response.json()
+        id_token = auth_data['idToken']
         
         # Get user profile
+        user = auth.get_user_by_email(request.email)
         user_doc = db.collection("users").document(user.uid).get()
         user_data = user_doc.to_dict() if user_doc.exists else {}
         
@@ -462,10 +478,12 @@ async def login(request: LoginRequest):
             "user_id": user.uid,
             "email": user.email,
             "full_name": user_data.get("full_name", ""),
-            "token": custom_token.decode('utf-8')
+            "token": id_token  # Return ID token instead of custom token
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 @app.post("/api/v1/auth/google")
 async def google_auth(request: GoogleAuthRequest):
@@ -498,7 +516,7 @@ async def google_auth(request: GoogleAuthRequest):
         raise HTTPException(status_code=401, detail=f"Google authentication failed: {str(e)}")
 
 @app.post("/api/v1/auth/signout")
-async def signout(current_user: dict = Depends(mock_get_current_user)):
+async def signout(current_user: dict = Depends(get_current_user)):
     """Sign out current user"""
     # In Firebase, sign out is typically handled on the frontend
     # Backend can revoke tokens if needed
@@ -513,11 +531,11 @@ async def signout(current_user: dict = Depends(mock_get_current_user)):
 # -------------------------------
 
 @app.get("/api/v1/users/me", response_model=UserProfile)
-async def get_me(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
-    """Get current user's profile.
-    - If email is provided, resolve via Firestore users.email == email; if missing, try Firebase Auth to get uid and upsert a minimal profile.
-    - If no email is provided, use current_user.uid.
-    """
+async def get_me(
+    email: Optional[str] = None if DEV_MODE else None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get current user's profile"""
     try:
         if email:
             # First, try Firestore by email
@@ -586,7 +604,7 @@ async def get_me(email: Optional[str] = None, current_user: dict = Depends(mock_
         raise HTTPException(status_code=500, detail=f"Failed to load profile: {str(e)}")
 
 @app.put("/api/v1/users/me")
-async def update_me(payload: ProfileUpdateRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+async def update_me(payload: ProfileUpdateRequest, email: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Update current user's profile. If email is provided, resolve via Firebase Auth and upsert by uid."""
     try:
         update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
@@ -867,10 +885,14 @@ class SetGradeRequest(BaseModel):
 
 
 @app.post("/api/v1/classes")
-async def create_class(request: CreateClassRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
-    """Create a class and add the creator as instructor.
-    In dev, allow ?email=... to resolve the creating user by Firebase Auth.
-    """
+@firestore.transactional
+async def create_class(
+    transaction,
+    request: CreateClassRequest,
+    email: Optional[str] = None if DEV_MODE else None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Create a class and add creator as instructor with transaction"""
     try:
         # Resolve creator uid
         if email:
@@ -909,7 +931,7 @@ async def create_class(request: CreateClassRequest, email: Optional[str] = None,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create class: {str(e)}")
 @app.get("/api/v1/classes")
-async def get_user_classes(email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+async def get_user_classes(email: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Get user's enrolled classes. In dev, allow ?email=... to resolve uid via Firebase Auth."""
     try:
         # Resolve uid from email if provided (dev convenience), else use current user
@@ -947,7 +969,7 @@ async def get_user_classes(email: Optional[str] = None, current_user: dict = Dep
         raise HTTPException(status_code=500, detail=f"Failed to fetch classes: {str(e)}")
 
 @app.post("/api/v1/classes/join")
-async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+async def join_class_by_code(request: JoinClassRequest, email: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Join class by code"""
     try:
         code = request.class_code.upper()
@@ -1064,7 +1086,7 @@ async def get_class_details(class_id: str, limit: int = 20, offset: int = 0,
         raise HTTPException(status_code=500, detail=f"Failed to get class details: {str(e)}")
 
 @app.delete("/api/v1/classes/{class_id}")
-async def delete_class(class_id: str, email: Optional[str] = None, current_user: dict = Depends(mock_get_current_user)):
+async def delete_class(class_id: str, email: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Delete a class and related data (instructors only; creator can delete).
     In dev, allow ?email=... to resolve the actor via Firebase Auth.
     """

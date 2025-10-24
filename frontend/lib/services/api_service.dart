@@ -203,6 +203,7 @@ class ApiService {
     }
   }
 
+
   static Future<Map<String, dynamic>> getClassDetails({
     required String classId,
     String? token,

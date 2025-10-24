@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1038619879866",
+    "project_id": "wonderhoy-pro-max-ai-project",
+    "storage_bucket": "wonderhoy-pro-max-ai-project.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1038619879866:android:3bea1145e608c167109583",
+        "android_client_info": {
+          "package_name": "com.colinbryan.synapse"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1038619879866-2mvlk3dr5rloko90h0likgj692a69c4p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCnLRIWm1bIZEVqsDp5HfsjvZvLBTzIKW4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1038619879866-2mvlk3dr5rloko90h0likgj692a69c4p.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
