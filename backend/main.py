@@ -5,6 +5,7 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
+
 import random
 import string
 import datetime
@@ -21,6 +22,8 @@ import io
 
 # Load environment variables
 load_dotenv()
+
+DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 
 # Initialize Firebase Admin SDK
 if not firebase_admin._apps:

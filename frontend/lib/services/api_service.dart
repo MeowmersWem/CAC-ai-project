@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 
 class ApiService {
   // Deployed API URL or localhost for development
@@ -187,11 +188,21 @@ class ApiService {
     }
   }
 
+   static Future<String?> _getFirebaseToken() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    return await user.getIdToken();
+  }
+
+
   static Future<Map<String, dynamic>> getClassRoster({
     required String classId,
-    String? token,
+    String? token, // Keep this for flexibility
   }) async {
-    final headers = _buildHeaders(token: token);
+    // Get token automatically if not provided
+    final authToken = token ?? await _getFirebaseToken();
+    
+    final headers = _buildHeaders(token: authToken);
     final response = await http.get(
       Uri.parse('$baseUrl/classes/$classId/roster'),
       headers: headers,

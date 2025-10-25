@@ -19,9 +19,17 @@ class _StudentClassmatesPageState extends State<StudentClassmatesPage> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final res = await ApiService.getClassRoster(classId: widget.classId);
-    final List<dynamic> items = res['roster'] ?? [];
-    return items.cast<Map<String, dynamic>>();
+    print('📱 Loading roster for class: ${widget.classId}');
+    try {
+      final res = await ApiService.getClassRoster(classId: widget.classId);
+      print('📱 Roster response: $res');
+      final List<dynamic> items = res['roster'] ?? [];
+      print('📱 Roster items count: ${items.length}');
+      return items.cast<Map<String, dynamic>>();
+    } catch (e) {
+      print('📱 Roster error: $e');
+      rethrow;
+    }
   }
 
   @override
@@ -46,7 +54,10 @@ class _StudentClassmatesPageState extends State<StudentClassmatesPage> {
             itemBuilder: (context, i) {
               final u = items[i];
               return ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.shade300)
+                ),
                 title: Text(u['full_name'] ?? 'Unknown'),
                 subtitle: Text((u['role'] ?? 'student').toString()),
               );

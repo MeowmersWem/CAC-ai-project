@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart'; // ← This file might be missing!
 import 'class_search_page.dart';
 import 'signup_page.dart';
 import 'services/api_service.dart';
